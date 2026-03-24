@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carteira — Regulador Financeiro</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .tbl-scroll { overflow-x: auto; }
+    .tbl-scroll table { min-width: 1100px; }
+    .signal { display:inline-flex; align-items:center; gap:4px; padding:2px 8px;
+              border-radius:20px; font-size:11px; font-weight:600; white-space:nowrap; }
+    .signal.green  { background:var(--green-dim);  color:var(--green); }
+    .signal.red    { background:var(--red-dim);    color:var(--red); }
+    .signal.yellow { background:var(--yellow-dim); color:var(--yellow); }
+    .ideal-input { width:56px; padding:3px 6px; font-size:12px; text-align:center; }
+    .vs-ideal { font-size:11px; }
+    .tab-btn { padding:7px 16px; border:1px solid var(--border); background:transparent;
+               color:var(--text-muted); border-radius:var(--radius); cursor:pointer;
+               font-size:13px; transition:var(--transition); }
+    .tab-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+    .loading-overlay { display:flex; align-items:center; gap:10px; color:var(--text-muted);
+                       font-size:13px; padding:32px; justify-content:center; }
+    .tooltip { position:relative; cursor:help; }
+    .tooltip:hover::after { content:attr(data-tip); position:absolute; bottom:120%;
+      left:50%; transform:translateX(-50%); background:var(--bg-card);
+      border:1px solid var(--border); color:var(--text); padding:6px 10px;
+      border-radius:6px; font-size:11px; white-space:nowrap; z-index:10; }
+    /* Painel de avisos fixo no rodapé */
+    #warningsPanel {
+      display:none; position:fixed; bottom:0; left:0; right:0; z-index:100;
+      background:var(--bg-card); border-top:1px solid rgba(210,153,34,.4);
+      padding:8px 16px; max-height:160px; overflow-y:auto;
+    }
+    #warningsPanel.visible { display:block; }
+    #warningsPanel .w-header {
+      display:flex; justify-content:space-between; align-items:center;
+      font-size:11px; font-weight:600; color:var(--yellow); margin-bottom:6px;
+    }
+    #warningsPanel .w-item {
+      font-size:11px; color:var(--yellow); padding:3px 0;
+      border-bottom:1px solid rgba(210,153,34,.15);
+    }
+    #warningsPanel .w-item:last-child { border-bottom:none; }
+    body.has-warnings .container { padding-bottom: 180px; }
+    /* Autocomplete */
+    .ac-wrap { position:relative; }
+    .ac-list { position:absolute; top:100%; left:0; right:0; background:var(--bg-card);
+               border:1px solid var(--border); border-radius:var(--radius); z-index:50;
+               max-height:200px; overflow-y:auto; margin-top:2px; }
+    .ac-item { padding:8px 12px; cursor:pointer; font-size:13px;
+               display:flex; align-items:center; gap:10px; transition:background var(--transition); }
+    .ac-item:hover, .ac-item.active { background:var(--bg-hover); }
+    .ac-item .ac-ticker { font-family:var(--mono); font-weight:600; color:var(--blue); min-width:60px; }
+    .ac-item .ac-name   { font-size:11px; color:var(--text-muted); }
+    .ac-item .ac-badge  { font-size:10px; padding:1px 5px; border-radius:8px;
+                          background:var(--blue-dim); color:var(--blue); margin-left:auto; }
+    .ac-item .ac-badge.fii { background:var(--purple-dim,rgba(188,140,255,.15)); color:var(--purple); }
+    /* CSV input estilizado */
+    .csv-label { display:flex; align-items:center; gap:10px; padding:9px 14px;
+                 background:var(--bg-input); border:1px solid var(--border);
+                 border-radius:var(--radius); cursor:pointer; transition:border-color var(--transition);
+                 font-size:13px; color:var(--text-muted); }
+    .csv-label:hover { border-color:var(--accent); color:var(--text); }
+    .csv-label .csv-icon { font-size:16px; }
+    .csv-label .csv-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #csvFile { display:none; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="header-brand">
+    <div class="logo">📊</div>
+    <div><h1>Regulador Financeiro</h1></div>
+  </div>
+  <span class="header-time" id="clock"></span>
+</header>
+
+<nav>
+  <a href="/">⬛ Dashboard</a>
+  <a href="/market">📈 Mercado</a>
+  <a href="/portfolio" class="active">💼 Carteira</a>
+  <a href="/transactions">📋 Transações</a>
+  <a href="/recommendations">💡 Recomendações</a>
+  <a href="/settings">⚙️ Tickers</a>
+</nav>
+
+<div class="container">
+
+  <!-- STATS -->
+  <div class="stats-grid">
+    <div class="stat-card blue">
+      <div class="stat-label">Investido</div>
+      <div class="stat-value" id="totalInvested">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Valor Atual</div>
+      <div class="stat-value" id="totalCurrent">—</div>
+    </div>
+    <div class="stat-card" id="cardPL">
+      <div class="stat-label">Ganho / Perda</div>
+      <div class="stat-value" id="totalPL">—</div>
+    </div>
+    <div class="stat-card" id="cardPct">
+      <div class="stat-label">Rentabilidade</div>
+      <div class="stat-value" id="totalPct">—</div>
+    </div>
+  </div>
+
+  <!-- OPERAÇÕES -->
+  <div class="grid grid-2">
+    <div class="card">
+      <h2>💰 Comprar</h2>
+      <div id="buyMsg"></div>
+      <form onsubmit="handleBuy(event)">
+        <div class="form-group">
+          <label>Ticker</label>
+          <div class="input-group ac-wrap">
+            <input type="text" id="buyTicker" placeholder="Ex: PETR4" required autocomplete="off"
+                   oninput="this.value=this.value.toUpperCase(); acFilter('buy', this.value)">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="fetchPrice('buy')">Buscar</button>
+            <div class="ac-list" id="acBuy" style="display:none"></div>
+          </div>
+          <div class="small mt-8" id="buyName"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Quantidade</label>
+            <input type="number" id="buyQty" placeholder="100" step="0.01" min="0.01" required>
+          </div>
+          <div class="form-group">
+            <label>Preço (R$)</label>
+            <input type="number" id="buyPrice" placeholder="0,00" step="0.01" min="0.01" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Data <span class="text-muted">(opcional)</span></label>
+          <input type="date" id="buyDate">
+        </div>
+        <button type="submit" class="btn btn-success btn-block">✓ Registrar Compra</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>📉 Vender</h2>
+      <div id="sellMsg"></div>
+      <form onsubmit="handleSell(event)">
+        <div class="form-group">
+          <label>Ticker</label>
+          <div class="input-group ac-wrap">
+            <input type="text" id="sellTicker" placeholder="Ex: PETR4" required autocomplete="off"
+                   oninput="this.value=this.value.toUpperCase(); acFilter('sell', this.value)">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="fetchPrice('sell')">Buscar</button>
+            <div class="ac-list" id="acSell" style="display:none"></div>
+          </div>
+          <div class="small mt-8" id="sellName"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Quantidade</label>
+            <input type="number" id="sellQty" placeholder="50" step="0.01" min="0.01" required>
+          </div>
+          <div class="form-group">
+            <label>Preço (R$)</label>
+            <input type="number" id="sellPrice" placeholder="0,00" step="0.01" min="0.01" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Data <span class="text-muted">(opcional)</span></label>
+          <input type="date" id="sellDate">
+        </div>
+        <button type="submit" class="btn btn-danger btn-block">✗ Registrar Venda</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- IMPORTAR CSV -->
+  <div class="card">
+    <h2>📤 Importar CSV</h2>
+    <p class="small mb-16">Formato: <code style="color:var(--blue)">ticker,quantity,price,date</code></p>
+    <div id="importMsg"></div>
+    <form onsubmit="handleCSV(event)" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:200px;margin:0">
+        <label>Arquivo CSV</label>
+        <label class="csv-label" for="csvFile" id="csvLabel">
+          <span class="csv-icon">📂</span>
+          <span class="csv-name" id="csvFileName">Clique para selecionar arquivo…</span>
+        </label>
+        <input type="file" id="csvFile" accept=".csv" required onchange="document.getElementById('csvFileName').textContent = this.files[0]?.name || 'Clique para selecionar arquivo…'">
+      </div>
+      <button type="submit" class="btn btn-primary">Importar</button>
+    </form>
+  </div>
+
+  <!-- ABAS (sempre visível) -->
+  <div class="card" style="padding:12px 16px">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <h2 style="margin:0;flex:1">💼 Posições <span class="small text-muted" id="posCount"></span></h2>
+      <button class="tab-btn active" id="tabSimple" onclick="switchTab('simple')">Resumo</button>
+      <button class="tab-btn" id="tabDetailed" onclick="switchTab('detailed')">Análise Completa</button>
+      <button class="tab-btn" id="tabAllocate" onclick="switchTab('allocate')">Aportar</button>
+      <button class="btn btn-ghost btn-sm" onclick="reload()">↻ Atualizar</button>
+    </div>
+  </div>
+
+  <div id="globalMsg"></div>
+
+  <!-- POSIÇÕES -->
+  <div id="positionsCard" class="card">
+    <div id="portfolioTable" class="loading-overlay"><div class="spinner"></div> Carregando…</div>
+  </div>
+
+  <!-- APORTAR (fora do card de posições, ocupa largura total) -->
+  <div id="allocateSection" style="display:none">
+    <div class="card">
+      <h2>💸 Simular Aporte</h2>
+      <p class="small text-muted" style="margin-bottom:16px">
+        Informe o valor disponível. O sistema recomenda quantas cotas comprar de cada ativo,
+        priorizando os com maior DY abaixo do preço negociável, e aproveita o troco com cotas extras.
+      </p>
+      <div style="display:flex;gap:10px;align-items:flex-end;max-width:420px">
+        <div class="form-group" style="flex:1;margin:0">
+          <label>Valor do Aporte (R$)</label>
+          <input type="number" id="budgetInput" min="0.01" step="0.01" placeholder="Ex: 1000,00">
+        </div>
+        <button class="btn btn-primary" style="height:38px" onclick="runAllocate()">Calcular</button>
+      </div>
+    </div>
+    <div id="allocateResult" style="margin-top:0"></div>
+  </div>
+
+</div>
+
+<!-- PAINEL DE AVISOS FIXO NO RODAPÉ -->
+<div id="warningsPanel">
+  <div class="w-header">
+    <span>⚠️ Avisos da Carteira</span>
+    <button onclick="document.getElementById('warningsPanel').classList.remove('visible'); document.body.classList.remove('has-warnings');"
+      style="background:none;border:none;color:var(--yellow);cursor:pointer;font-size:14px;padding:0">✕</button>
+  </div>
+  <div id="warningsList"></div>
+  <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(210,153,34,.2);font-size:10px;color:var(--text-muted);line-height:1.6">
+    💡 <strong>Justo</strong> = Graham √(22,5×LPA×VPA) para ações, VPA para FIIs &nbsp;|
+    <strong>Teto</strong> = DPA÷6% (Bazin, DPA = maior entre ano anterior completo e anualização do parcial atual) &nbsp;|
+    <strong>Vale Negociar</strong> = menor entre Justo e Teto com 10% de margem &nbsp;|
+    <strong>% Ideal Renda</strong> = sugestão automática pelo DY
+  </div>
+</div>
+
+<!-- MODAL EDITAR POSIÇÃO -->
+<div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;align-items:center;justify-content:center">
+  <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:100%;max-width:380px;margin:16px">
+    <h2 style="font-size:14px;margin-bottom:16px">✏️ Editar Posição — <span id="modalTicker"></span></h2>
+    <div id="modalMsg"></div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Quantidade</label>
+        <input type="number" id="eQty" step="0.01" min="0.01">
+      </div>
+      <div class="form-group">
+        <label>Preço Médio (R$)</label>
+        <input type="number" id="ePM" step="0.01" min="0.01">
+      </div>
+    </div>
+    <p class="small text-muted mt-8">⚠ Edição direta não gera transação no histórico.</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="savePosition()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/script.js"></script>
+<script>
+const fmt  = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v ?? 0);
+const fmtN = (v,d=2) => v != null ? Number(v).toFixed(d) : '—';
+const pct  = v => v != null ? (v>=0?'+':'')+Number(v).toFixed(2)+'%' : '—';
+const dash = v => v != null ? v : '—';
+
+function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR'); }
+tick(); setInterval(tick, 1000);
+
+let currentTab = 'simple';
+let editingTicker = null;
+let _acTickers = null; // cache de tickers para autocomplete
+
+const IDEAL_KEY = 'portfolio_ideal_pct';
+function loadIdeal() { try { return JSON.parse(localStorage.getItem(IDEAL_KEY)||'{}'); } catch { return {}; } }
+function saveIdeal(obj) { localStorage.setItem(IDEAL_KEY, JSON.stringify(obj)); }
+
+// Carrega lista de tickers (carteira + tickers.json) para autocomplete
+async function loadAcTickers() {
+  if (_acTickers) return _acTickers;
+  const [portRes, tickRes] = await Promise.all([
+    fetch('/api/portfolio').then(r=>r.json()).catch(()=>null),
+    fetch('/api/tickers').then(r=>r.json()).catch(()=>null),
+  ]);
+  const map = {};
+  (tickRes?.data || []).forEach(t => { map[t.ticker] = { ticker: t.ticker, name: t.name, type: t.type }; });
+  (portRes?.data?.portfolio || []).forEach(p => {
+    const tk = p.ticker.replace('.SA','');
+    if (!map[tk]) map[tk] = { ticker: tk, name: p.name || tk, type: '11' in tk ? 'FII' : 'Ação' };
+  });
+  _acTickers = Object.values(map).sort((a,b) => a.ticker.localeCompare(b.ticker));
+  return _acTickers;
+}
+
+function acFilter(side, val) {
+  const listEl = document.getElementById('ac' + (side==='buy'?'Buy':'Sell'));
+  if (!val || val.length < 1) { listEl.style.display='none'; return; }
+  loadAcTickers().then(tickers => {
+    const q = val.toUpperCase();
+    const matches = tickers.filter(t =>
+      t.ticker.includes(q) || (t.name||'').toUpperCase().includes(q)
+    ).slice(0, 8);
+    if (!matches.length) { listEl.style.display='none'; return; }
+    listEl.innerHTML = matches.map(t => {
+      const isFii = t.type === 'FII' || t.ticker.endsWith('11');
+      return `<div class="ac-item" onmousedown="acSelect('${side}','${t.ticker}','${(t.name||'').replace(/'/g,"\\'")}')"
+        ><span class="ac-ticker">${t.ticker}</span><span class="ac-name">${t.name||''}</span
+        ><span class="ac-badge${isFii?' fii':''}">${isFii?'FII':'Ação'}</span></div>`;
+    }).join('');
+    listEl.style.display = 'block';
+  });
+}
+
+function acSelect(side, ticker, name) {
+  document.getElementById(side+'Ticker').value = ticker;
+  document.getElementById('ac'+(side==='buy'?'Buy':'Sell')).style.display='none';
+  fetchPrice(side);
+}
+
+// Fecha dropdown ao clicar fora
+document.addEventListener('click', e => {
+  if (!e.target.closest('.ac-wrap')) {
+    document.querySelectorAll('.ac-list').forEach(el => el.style.display='none');
+  }
+});
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabSimple').classList.toggle('active', tab==='simple');
+  document.getElementById('tabDetailed').classList.toggle('active', tab==='detailed');
+  document.getElementById('tabAllocate').classList.toggle('active', tab==='allocate');
+  // Alterna visibilidade: card de posições vs seção de aporte
+  const isAllocate = tab === 'allocate';
+  document.getElementById('positionsCard').style.display  = isAllocate ? 'none' : '';
+  document.getElementById('allocateSection').style.display = isAllocate ? '' : 'none';
+  if (!isAllocate) {
+    document.getElementById('warningsPanel').classList.remove('visible');
+    document.body.classList.remove('has-warnings');
+  }
+  if (isAllocate) {
+    const saved = localStorage.getItem('portfolio_aporte_budget') || '';
+    document.getElementById('budgetInput').value = saved;
+    if (saved) runAllocate();
+  } else {
+    reload();
+  }
+}
+
+function gMsg(text, ok) {
+  const el = document.getElementById('globalMsg');
+  el.className = 'alert '+(ok?'alert-success':'alert-danger');
+  el.textContent = text;
+  setTimeout(()=>{ el.className=''; el.textContent=''; }, 4000);
+}
+function sMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  el.className = 'alert '+(ok?'alert-success':'alert-danger');
+  el.textContent = text;
+  setTimeout(()=>{ el.className=''; el.textContent=''; }, 5000);
+}
+
+async function fetchPrice(side) {
+  const raw = document.getElementById(side+'Ticker').value.trim().toUpperCase().replace('.SA','');
+  if (!raw) return;
+  const nameEl = document.getElementById(side+'Name');
+  nameEl.textContent = 'Buscando…';
+  const res = await fetch('/api/market/fetch/'+raw).then(r=>r.json());
+  if (res.success) {
+    document.getElementById(side+'Price').value = res.data.current_price;
+    document.getElementById(side+'Ticker').value = res.data.ticker;
+    nameEl.textContent = res.data.name+' — '+fmt(res.data.current_price)
+      +' ('+(res.data.variation_percent>=0?'+':'')+res.data.variation_percent.toFixed(2)+'%)';
+  } else {
+    nameEl.textContent = '⚠ Não encontrado na B3';
+  }
+}
+
+async function handleBuy(e) {
+  e.preventDefault();
+  const body = {
+    ticker: document.getElementById('buyTicker').value.toUpperCase(),
+    quantity: parseFloat(document.getElementById('buyQty').value),
+    price: parseFloat(document.getElementById('buyPrice').value),
+    date: document.getElementById('buyDate').value || null,
+  };
+  const res = await fetch('/api/portfolio/buy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+  sMsg('buyMsg', res.message, res.success);
+  if (res.success) { e.target.reset(); document.getElementById('buyName').textContent=''; reload(); }
+}
+
+async function handleSell(e) {
+  e.preventDefault();
+  const body = {
+    ticker: document.getElementById('sellTicker').value.toUpperCase(),
+    quantity: parseFloat(document.getElementById('sellQty').value),
+    price: parseFloat(document.getElementById('sellPrice').value),
+    date: document.getElementById('sellDate').value || null,
+  };
+  const res = await fetch('/api/portfolio/sell',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+  sMsg('sellMsg', res.success ? `${res.message} | G/P: ${fmt(res.profit_loss)}` : res.message, res.success);
+  if (res.success) { e.target.reset(); document.getElementById('sellName').textContent=''; reload(); }
+}
+
+async function handleCSV(e) {
+  e.preventDefault();
+  const fd = new FormData();
+  fd.append('file', document.getElementById('csvFile').files[0]);
+  const res = await fetch('/api/import/csv',{method:'POST',body:fd}).then(r=>r.json());
+  sMsg('importMsg', res.message+(res.errors?.length?' | '+res.errors.join('; '):''), res.success);
+  if (res.success) { e.target.reset(); reload(); }
+}
+
+function openEdit(ticker, qty, pm) {
+  editingTicker = ticker;
+  document.getElementById('modalTicker').textContent = ticker.replace('.SA','');
+  document.getElementById('eQty').value = qty;
+  document.getElementById('ePM').value  = pm;
+  document.getElementById('modalMsg').className='';
+  document.getElementById('modalMsg').textContent='';
+  document.getElementById('modal').style.display='flex';
+}
+function closeModal() { document.getElementById('modal').style.display='none'; editingTicker=null; }
+
+async function savePosition() {
+  const qty = parseFloat(document.getElementById('eQty').value);
+  const pm  = parseFloat(document.getElementById('ePM').value);
+  if (!qty||!pm) { document.getElementById('modalMsg').className='alert alert-danger'; document.getElementById('modalMsg').textContent='Preencha todos os campos.'; return; }
+  const res = await fetch(`/api/portfolio/${encodeURIComponent(editingTicker)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantity:qty,average_price:pm})}).then(r=>r.json());
+  if (res.success) { closeModal(); gMsg('Posição atualizada.',true); reload(); }
+  else { document.getElementById('modalMsg').className='alert alert-danger'; document.getElementById('modalMsg').textContent=res.message; }
+}
+
+async function delPosition(ticker) {
+  if (!confirm(`Remover ${ticker.replace('.SA','')} da carteira?`)) return;
+  const res = await fetch(`/api/portfolio/${encodeURIComponent(ticker)}`,{method:'DELETE'}).then(r=>r.json());
+  if (res.success) { gMsg('Posição removida.',true); reload(); }
+  else gMsg(res.message, false);
+}
+
+function updateIdeal(ticker, val) {
+  const obj = loadIdeal();
+  obj[ticker] = parseFloat(val) || 0;
+  saveIdeal(obj);
+}
+
+async function reload() {
+  document.getElementById('portfolioTable').innerHTML =
+    '<div class="loading-overlay"><div class="spinner"></div> Carregando…</div>';
+
+  if (currentTab === 'detailed') { reloadStream(); return; }
+
+  // Aba simples: API rápida sem fundamentais
+  const res = await fetch('/api/portfolio').then(r=>r.json()).catch(()=>null);
+  if (!res?.success) {
+    document.getElementById('portfolioTable').innerHTML =
+      '<div class="empty"><div class="empty-icon">⚠️</div>Erro ao carregar dados</div>';
+    return;
+  }
+  _updateStats(res.data.performance);
+  const portfolio = res.data.portfolio;
+  document.getElementById('posCount').textContent = `${portfolio.length} ativo${portfolio.length!==1?'s':''}`;
+  if (!portfolio.length) {
+    document.getElementById('portfolioTable').innerHTML =
+      '<div class="empty"><div class="empty-icon">💼</div>Nenhum ativo na carteira</div>';
+    return;
+  }
+  renderSimple(portfolio);
+}
+
+function _updateStats(p) {
+  document.getElementById('totalInvested').textContent = fmt(p.total_invested);
+  document.getElementById('totalCurrent').textContent  = fmt(p.total_current_value);
+  const pl = p.total_profit_loss, pp = p.total_profit_loss_percent;
+  document.getElementById('totalPL').textContent  = fmt(pl);
+  document.getElementById('totalPct').textContent = pct(pp);
+  document.getElementById('totalPL').className  = 'stat-value '+(pl>=0?'positive':'negative');
+  document.getElementById('totalPct').className = 'stat-value '+(pp>=0?'positive':'negative');
+  document.getElementById('cardPL').className  = 'stat-card '+(pl>=0?'green':'red');
+  document.getElementById('cardPct').className = 'stat-card '+(pp>=0?'green':'red');
+}
+
+// SSE: recebe ativos um a um conforme ficam prontos
+let _sseSource = null;
+function reloadStream() {
+  if (_sseSource) { _sseSource.close(); _sseSource = null; }
+
+  const tbl = document.getElementById('portfolioTable');
+  // Monta estrutura da tabela imediatamente com linhas skeleton
+  tbl.innerHTML = `
+    <div class="tbl-scroll"><table id="detailedTbl">
+      <thead><tr>
+        <th>Ticker</th><th>Qtd</th>
+        <th class="tooltip" data-tip="Preço médio de compra">PM</th>
+        <th>Atual</th>
+        <th class="tooltip" data-tip="Graham (ações) / VPA (FIIs)">Justo</th>
+        <th class="tooltip" data-tip="Preço teto Bazin (DPA/6%)">Teto</th>
+        <th class="tooltip" data-tip="Preço máximo para negociar com 10% de margem">Vale Negociar</th>
+        <th>Rent.</th><th>G/P R$</th>
+        <th class="tooltip" data-tip="Dividend Yield anual">DY</th>
+        <th class="tooltip" data-tip="Yield on Cost">YC</th>
+        <th class="tooltip" data-tip="% do valor total da carteira">% Cart.</th>
+        <th class="tooltip" data-tip="% ideal sugerida pelo DY">% Ideal Renda</th>
+        <th class="tooltip" data-tip="% ideal manual">% Ideal</th>
+        <th class="tooltip" data-tip="Diferença entre % atual e % ideal">Δ Ideal</th>
+        <th>Sinal</th><th></th>
+      </tr></thead>
+      <tbody id="detailedBody"></tbody>
+    </table></div>`;
+
+  const warnings = [];
+  const ideal    = loadIdeal();
+  let   received = 0;
+  let   total    = 0;
+
+  _sseSource = new EventSource('/api/portfolio/stream');
+
+  _sseSource.onmessage = e => {
+    const msg = JSON.parse(e.data);
+
+    if (msg.type === 'performance') {
+      _updateStats(msg.data);
+      return;
+    }
+    if (msg.type === 'total') {
+      total = msg.count;
+      document.getElementById('posCount').textContent = `${total} ativo${total!==1?'s':''}`;
+      return;
+    }
+    if (msg.type === 'done') {
+      _sseSource.close(); _sseSource = null;
+      // Atualiza painel de avisos
+      const wp = document.getElementById('warningsPanel');
+      const wl = document.getElementById('warningsList');
+      wl.innerHTML = warnings.length
+        ? warnings.map(w=>`<div class="w-item">${w}</div>`).join('')
+        : '<div class="w-item" style="color:var(--text-muted)">Nenhum aviso no momento.</div>';
+      wp.classList.add('visible');
+      document.body.classList.add('has-warnings');
+      return;
+    }
+    if (msg.type === 'asset') {
+      received++;
+      const a      = msg.data;
+      const ticker = a.ticker.replace('.SA','');
+      const qty    = a.quantity % 1 === 0 ? a.quantity : Number(a.quantity).toFixed(2);
+      const varCls = (a.profit_pct ?? 0) >= 0 ? 'positive' : 'negative';
+      const sig    = a.buy_signal || {action:'—', cls:'yellow', reason:''};
+
+      const negPrice = a.negotiable_price;
+      let negCell = '<span class="text-muted">—</span>';
+      if (negPrice != null) {
+        const isBelow = a.current_price <= negPrice;
+        negCell = `<span class="mono">${fmt(negPrice)}</span> `
+          + (isBelow
+            ? `<span class="signal green" title="Abaixo do limite negociável">✓ Negociar</span>`
+            : `<span class="signal red"   title="Acima do limite negociável">✗ Aguardar</span>`);
+        if (!isBelow) warnings.push(`${ticker} está acima do preço negociável (${fmt(negPrice)}) — aguardar recuo`);
+      }
+
+      const idealIncome = a.ideal_income_pct;
+      const idealIncomeCell = idealIncome != null
+        ? `<span class="mono tooltip" data-tip="Sugerido pelo DY: ${a.dy?.toFixed(2) ?? '—'}%">${idealIncome.toFixed(1)}%</span>`
+        : '<span class="text-muted">—</span>';
+
+      const idealPct  = ideal[a.ticker] ?? '';
+      const diffIdeal = idealPct !== '' && a.pct_portfolio != null
+        ? (a.pct_portfolio - parseFloat(idealPct)).toFixed(1) : null;
+      const diffCls   = diffIdeal !== null
+        ? (parseFloat(diffIdeal)>0?'positive':parseFloat(diffIdeal)<0?'negative':'text-muted') : '';
+
+      if (diffIdeal !== null && parseFloat(diffIdeal) < -2)
+        warnings.push(`${ticker} está ${Math.abs(diffIdeal)}% abaixo do % ideal — considere aportar`);
+      if (diffIdeal !== null && parseFloat(diffIdeal) > 2)
+        warnings.push(`${ticker} está ${diffIdeal}% acima do % ideal — posição concentrada`);
+
+      const tr = document.createElement('tr');
+      tr.className = 'fade-in';
+      tr.innerHTML = `
+        <td class="ticker-cell">${ticker}</td>
+        <td class="mono">${qty}</td>
+        <td class="mono">${fmt(a.average_price)}</td>
+        <td class="mono">${fmt(a.current_price)}</td>
+        <td class="mono tooltip" data-tip="Graham / VPA (FII)">${a.fair_price != null ? fmt(a.fair_price) : '<span class="text-muted">—</span>'}</td>
+        <td class="mono tooltip" data-tip="Bazin: DPA / 6%">${a.ceiling_price != null ? fmt(a.ceiling_price) : '<span class="text-muted">—</span>'}</td>
+        <td style="min-width:160px">${negCell}</td>
+        <td class="mono ${varCls}">${pct(a.profit_pct)}</td>
+        <td class="mono ${varCls}">${fmt(a.profit_loss)}</td>
+        <td class="mono">${a.dy != null ? a.dy.toFixed(2)+'%' : '<span class="text-muted">—</span>'}</td>
+        <td class="mono">${a.yc != null ? a.yc.toFixed(2)+'%' : '<span class="text-muted">—</span>'}</td>
+        <td class="mono">${a.pct_portfolio != null ? a.pct_portfolio.toFixed(1)+'%' : '—'}</td>
+        <td>${idealIncomeCell}</td>
+        <td><input class="ideal-input" type="number" min="0" max="100" step="0.5"
+          value="${idealPct}" placeholder="0"
+          onchange="updateIdeal('${a.ticker}',this.value);renderIdealDiff(this,${a.pct_portfolio??0})"
+          title="% ideal manual"></td>
+        <td class="mono vs-ideal ${diffCls}" id="diff-${ticker}">${diffIdeal!==null?(parseFloat(diffIdeal)>0?'+':'')+diffIdeal+'%':'—'}</td>
+        <td><span class="signal ${sig.cls}" title="${sig.reason}">${sig.action}</span></td>
+        <td><div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-icon btn-sm" onclick="openEdit('${a.ticker}',${a.quantity},${a.average_price})">✏️</button>
+          <button class="btn btn-danger btn-icon btn-sm" onclick="delPosition('${a.ticker}')">🗑</button>
+        </div></td>`;
+      document.getElementById('detailedBody').appendChild(tr);
+    }
+  };
+
+  _sseSource.onerror = () => {
+    if (_sseSource) { _sseSource.close(); _sseSource = null; }
+  };
+}
+
+function renderAllocate() {} // layout agora é estático no HTML
+
+async function runAllocate() {
+  const input  = document.getElementById('budgetInput');
+  const budget = parseFloat(input?.value);
+  if (!budget || budget <= 0) return;
+  localStorage.setItem('portfolio_aporte_budget', budget);
+
+  const el = document.getElementById('allocateResult');
+  el.innerHTML = '<div class="loading-overlay"><div class="spinner"></div> Calculando…</div>';
+
+  const res = await fetch(`/api/portfolio/allocate?budget=${budget}`).then(r=>r.json()).catch(()=>null);
+  if (!res?.success) {
+    el.innerHTML = `<div class="alert alert-danger">${res?.message || 'Erro ao calcular'}</div>`;
+    return;
+  }
+
+  const { suggestions, near_miss, total_used, remaining } = res.data;
+  let html = '';
+
+  // ── Stats ──
+  html += `<div class="stats-grid" style="margin-bottom:0">
+    <div class="stat-card blue"><div class="stat-label">Aporte</div><div class="stat-value">${fmt(budget)}</div></div>
+    <div class="stat-card green"><div class="stat-label">A Investir</div><div class="stat-value">${fmt(total_used)}</div></div>
+    <div class="stat-card"><div class="stat-label">Sobra</div><div class="stat-value">${fmt(remaining)}</div></div>
+  </div>`;
+
+  // ── Comprar agora ──
+  if (suggestions.length) {
+    const rows = suggestions.map(s => {
+      const negOk = s.negotiable_price && s.price <= s.negotiable_price;
+      const badge = negOk ? `<span class="signal green">✓ Abaixo do teto</span>`
+                          : `<span class="signal yellow">≈ Próximo do teto</span>`;
+      return `<tr>
+        <td class="ticker-cell">${s.ticker}</td>
+        <td style="font-size:20px;font-weight:800;color:var(--green);text-align:center">${s.quantity} <span style="font-size:11px;color:var(--text-muted);font-weight:400">cotas</span></td>
+        <td class="mono">${fmt(s.price)}</td>
+        <td class="mono" style="font-weight:600;color:var(--blue)">${fmt(s.cost)}</td>
+        <td class="mono">${s.dy != null ? s.dy.toFixed(2)+'%' : '—'}</td>
+        <td class="mono">${s.ceiling_price != null ? fmt(s.ceiling_price) : '—'}</td>
+        <td>${badge}</td>
+        <td style="font-size:11px;color:var(--text-muted)">${s.reason || '—'}</td>
+      </tr>`;
+    }).join('');
+    html += `<div class="card" style="margin-top:16px;margin-bottom:0">
+      <h2>✅ Comprar agora</h2>
+      <div class="tbl-scroll"><table>
+        <thead><tr><th>Ativo</th><th style="text-align:center">Cotas</th><th>Preço</th>
+          <th>Custo</th><th>DY</th><th>Teto Bazin</th><th>Status</th><th>Motivo</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  } else {
+    html += `<div class="card" style="margin-top:16px;margin-bottom:0">
+      <div class="empty" style="padding:24px"><div class="empty-icon">📊</div>
+        Nenhum ativo elegível para compra com ${fmt(budget)} no momento.
+      </div></div>`;
+  }
+
+  // ── Aproveitar o extra: cotas que cabem no troco ──
+  if (remaining > 0) {
+    // Todos os ativos (sugestões + near_miss) que cabem no saldo restante
+    const allAssets = [
+      ...suggestions.map(s => ({...s, already: true})),
+      ...near_miss.map(s => ({...s, already: false}))
+    ];
+    const extras = allAssets
+      .filter(s => s.price <= remaining)
+      .sort((a, b) => (b.dy || 0) - (a.dy || 0)); // maior DY primeiro
+
+    if (extras.length) {
+      // Simula distribuição do troco
+      let troco = remaining;
+      const extraBuys = [];
+      for (const s of extras) {
+        const qty = Math.floor(troco / s.price);
+        if (qty < 1) continue;
+        const cost = round2(qty * s.price);
+        if (cost > troco) continue;
+        troco = round2(troco - cost);
+        extraBuys.push({...s, quantity: qty, cost});
+        if (troco < 0.01) break;
+      }
+
+      if (extraBuys.length) {
+        const totalExtra = round2(extraBuys.reduce((a,b) => a + b.cost, 0));
+        const rows3 = extraBuys.map(s => {
+          const tag = s.already
+            ? `<span class="signal green">+${s.quantity} cota${s.quantity>1?'s':''} a mais</span>`
+            : `<span class="signal yellow">nova posição</span>`;
+          return `<tr>
+            <td class="ticker-cell">${s.ticker}</td>
+            <td style="font-size:18px;font-weight:700;color:var(--yellow);text-align:center">${s.quantity}</td>
+            <td class="mono">${fmt(s.price)}</td>
+            <td class="mono" style="color:var(--yellow);font-weight:600">${fmt(s.cost)}</td>
+            <td class="mono">${s.dy != null ? s.dy.toFixed(2)+'%' : '—'}</td>
+            <td>${tag}</td>
+          </tr>`;
+        }).join('');
+        html += `<div class="card" style="margin-top:16px;margin-bottom:0;border-color:rgba(210,153,34,.3)">
+          <h2>💰 Aproveitar o Extra <span style="font-size:11px;font-weight:400;color:var(--text-muted)">— com os ${fmt(remaining)} restantes</span></h2>
+          <div class="tbl-scroll"><table>
+            <thead><tr><th>Ativo</th><th style="text-align:center">Cotas</th><th>Preço</th><th>Custo</th><th>DY</th><th>Tipo</th></tr></thead>
+            <tbody>${rows3}</tbody>
+          </table></div>
+          <p class="small text-muted" style="margin-top:10px">
+            Sobra após isso: <strong>${fmt(round2(remaining - totalExtra))}</strong>
+          </p>
+        </div>`;
+      }
+    }
+  }
+
+  // ── Cogitações ──
+  if (near_miss.length) {
+    const rows2 = near_miss.map(s => {
+      const sigCls = s.buy_signal === 'COMPRAR' ? 'green' : s.buy_signal === 'AGUARDAR' ? 'red' : 'yellow';
+      return `<tr>
+        <td class="ticker-cell">${s.ticker}</td>
+        <td class="mono">${fmt(s.price)}</td>
+        <td class="mono" style="color:var(--yellow);font-weight:600">+ ${fmt(s.missing)}</td>
+        <td class="mono">${s.dy != null ? s.dy.toFixed(2)+'%' : '—'}</td>
+        <td class="mono">${s.ceiling_price != null ? fmt(s.ceiling_price) : '—'}</td>
+        <td><span class="signal ${sigCls}">${s.buy_signal}</span></td>
+        <td style="font-size:11px;color:var(--text-muted)">${s.reason || '—'}</td>
+      </tr>`;
+    }).join('');
+    html += `<div class="card" style="margin-top:16px;margin-bottom:0">
+      <h2>🤔 Cogitações <span style="font-size:11px;font-weight:400;color:var(--text-muted)">— não cabem no aporte, mas são interessantes</span></h2>
+      <div class="tbl-scroll"><table>
+        <thead><tr><th>Ativo</th><th>Preço/cota</th><th>Falta</th><th>DY</th><th>Teto Bazin</th><th>Sinal</th><th>Motivo</th></tr></thead>
+        <tbody>${rows2}</tbody>
+      </table></div>
+      <p class="small text-muted" style="margin-top:10px">
+        ⚠️ Coluna <strong>Falta</strong> = quanto falta para comprar 1 cota.
+      </p>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+const round2 = v => Math.round(v * 100) / 100;
+
+function renderSimple(portfolio) {
+  const rows = portfolio.map(a => {
+    const inv = a.quantity * a.average_price;
+    const cur = a.quantity * (a.current_price || a.average_price);
+    const diff = cur - inv, diffPct = inv ? diff/inv*100 : 0;
+    const qty = a.quantity % 1 === 0 ? a.quantity : a.quantity.toFixed(2);
+    return `<tr>
+      <td class="ticker-cell">${a.ticker.replace('.SA','')}</td>
+      <td class="mono">${qty}</td>
+      <td class="mono">${fmt(a.average_price)}</td>
+      <td class="mono">${fmt(a.current_price||a.average_price)}</td>
+      <td class="mono">${fmt(inv)}</td>
+      <td class="mono">${fmt(cur)}</td>
+      <td class="mono ${diff>=0?'positive':'negative'}">${diff>=0?'▲':'▼'} ${fmt(Math.abs(diff))} <span class="small">(${pct(diffPct)})</span></td>
+      <td>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-icon btn-sm" title="Editar"
+            onclick="openEdit('${a.ticker}',${a.quantity},${a.average_price})">✏️</button>
+          <button class="btn btn-danger btn-icon btn-sm" title="Remover"
+            onclick="delPosition('${a.ticker}')">🗑</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('portfolioTable').innerHTML = `
+    <div class="tbl-scroll"><table>
+      <thead><tr>
+        <th>Ticker</th><th>Qtd</th><th>Preço Médio</th><th>Atual</th>
+        <th>Investido</th><th>Valor Atual</th><th>Resultado</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+function renderIdealDiff(input, currentPct) {
+  const ticker = input.closest('tr').querySelector('.ticker-cell').textContent;
+  const ideal  = parseFloat(input.value) || 0;
+  const diff   = (currentPct - ideal).toFixed(1);
+  const el     = document.getElementById('diff-'+ticker);
+  if (!el) return;
+  el.textContent = (parseFloat(diff)>0?'+':'')+diff+'%';
+  el.className = 'mono vs-ideal ' + (parseFloat(diff)>0?'positive':parseFloat(diff)<0?'negative':'text-muted');
+}
+
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal')) closeModal();
+});
+
+reload();
+setInterval(() => { if (currentTab==='simple') reload(); }, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Regulador Financeiro</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .health-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    @media(max-width:700px){ .health-grid { grid-template-columns:1fr; } }
+
+    .health-section h3 { font-size:13px; font-weight:600; margin-bottom:10px;
+                          display:flex; align-items:center; gap:6px; }
+
+    .asset-row { display:flex; align-items:center; gap:10px; padding:8px 0;
+                 border-bottom:1px solid var(--border); }
+    .asset-row:last-child { border-bottom:none; }
+
+    .asset-ticker { font-family:var(--mono); font-weight:700; font-size:13px;
+                    min-width:52px; color:var(--blue); }
+    .asset-name   { font-size:11px; color:var(--text-muted); flex:1;
+                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .asset-pct    { font-family:var(--mono); font-size:13px; font-weight:600;
+                    min-width:64px; text-align:right; }
+    .asset-reasons { font-size:10px; color:var(--text-muted); margin-top:2px; }
+
+    .opp-row { display:flex; align-items:flex-start; gap:10px; padding:10px 0;
+               border-bottom:1px solid var(--border); }
+    .opp-row:last-child { border-bottom:none; }
+    .opp-ticker { font-family:var(--mono); font-weight:700; font-size:13px;
+                  min-width:52px; color:var(--blue); }
+    .opp-body   { flex:1; }
+    .opp-name   { font-size:11px; color:var(--text-muted); margin-bottom:3px; }
+    .opp-reason { font-size:11px; color:var(--text-muted); margin-top:3px; }
+    .opp-meta   { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:4px; }
+    .opp-price  { font-family:var(--mono); font-size:13px; font-weight:600; }
+    .conf-bar   { height:4px; border-radius:2px; background:var(--green-dim);
+                  margin-top:6px; }
+    .conf-fill  { height:100%; border-radius:2px; background:var(--green); }
+
+    .health-summary { display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+    .hs-pill { padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; }
+    .hs-pill.green  { background:var(--green-dim);  color:var(--green); }
+    .hs-pill.yellow { background:var(--yellow-dim); color:var(--yellow); }
+    .hs-pill.red    { background:var(--red-dim);    color:var(--red); }
+
+    .signal { display:inline-flex; align-items:center; gap:4px; padding:2px 8px;
+              border-radius:20px; font-size:11px; font-weight:600; }
+    .signal.green  { background:var(--green-dim);  color:var(--green); }
+    .signal.red    { background:var(--red-dim);    color:var(--red); }
+    .signal.yellow { background:var(--yellow-dim); color:var(--yellow); }
+  </style>
+</head>
+<body>
+<header>
+  <div class="header-brand">
+    <div class="logo">📊</div>
+    <div>
+      <h1>Regulador Financeiro</h1>
+      <p>Monitoramento em Tempo Real</p>
+    </div>
+  </div>
+  <span class="header-time" id="clock"></span>
+</header>
+
+<nav>
+  <a href="/" class="active">⬛ Dashboard</a>
+  <a href="/market">📈 Mercado</a>
+  <a href="/portfolio">💼 Carteira</a>
+  <a href="/transactions">📋 Transações</a>
+  <a href="/recommendations">💡 Recomendações</a>
+  <a href="/settings">⚙️ Tickers</a>
+</nav>
+
+<div class="container">
+
+  <!-- STATS -->
+  <div class="stats-grid">
+    <div class="stat-card blue">
+      <div class="stat-label">Valor Investido</div>
+      <div class="stat-value" id="totalInvested">—</div>
+    </div>
+    <div class="stat-card" id="cardCurrent">
+      <div class="stat-label">Valor Atual</div>
+      <div class="stat-value" id="totalCurrent">—</div>
+    </div>
+    <div class="stat-card" id="cardPL">
+      <div class="stat-label">Ganho / Perda</div>
+      <div class="stat-value" id="totalPL">—</div>
+    </div>
+    <div class="stat-card" id="cardPct">
+      <div class="stat-label">Rentabilidade</div>
+      <div class="stat-value" id="totalPct">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Ativos</div>
+      <div class="stat-value" id="assetsCount">—</div>
+    </div>
+  </div>
+
+  <!-- SAÚDE DA CARTEIRA -->
+  <div class="card">
+    <div class="card-header">
+      <h2>💼 Saúde da Carteira</h2>
+      <a href="/portfolio" class="btn btn-ghost btn-sm">Ver carteira →</a>
+    </div>
+    <div id="healthSummary"></div>
+    <div class="health-grid" id="healthGrid">
+      <div class="loading-overlay"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- OPORTUNIDADES + TRANSAÇÕES -->
+  <div class="grid grid-2">
+    <div class="card">
+      <div class="card-header">
+        <h2>🎯 Oportunidades de Compra</h2>
+        <a href="/recommendations" class="btn btn-ghost btn-sm">Ver todas →</a>
+      </div>
+      <div id="opportunities"><div class="loading-overlay"><div class="spinner"></div></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h2>📋 Últimas Transações</h2>
+        <a href="/transactions" class="btn btn-ghost btn-sm">Ver todas →</a>
+      </div>
+      <div id="recentTrans"><div class="loading-overlay"><div class="spinner"></div></div></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="/static/script.js"></script>
+<script>
+const fmt  = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v ?? 0);
+const pct  = (v, sign=true) => v != null ? (sign&&v>=0?'+':'')+Number(v).toFixed(2)+'%' : '—';
+const mono = v => `<span class="mono">${v}</span>`;
+
+function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR'); }
+tick(); setInterval(tick, 1000);
+
+async function load() {
+  const res = await fetch('/api/dashboard').then(r=>r.json()).catch(()=>null);
+  if (!res?.success) return;
+
+  const { performance, health, opportunities, transactions } = res.data;
+
+  // ── Stats ──
+  document.getElementById('totalInvested').textContent = fmt(performance.total_invested);
+  document.getElementById('totalCurrent').textContent  = fmt(performance.total_current_value);
+  document.getElementById('assetsCount').textContent   = performance.assets_count;
+  const pl = performance.total_profit_loss, pp = performance.total_profit_loss_percent;
+  document.getElementById('totalPL').textContent  = fmt(pl);
+  document.getElementById('totalPct').textContent = pct(pp);
+  document.getElementById('totalPL').className  = 'stat-value '+(pl>=0?'positive':'negative');
+  document.getElementById('totalPct').className = 'stat-value '+(pp>=0?'positive':'negative');
+  document.getElementById('cardPL').className  = 'stat-card '+(pl>=0?'green':'red');
+  document.getElementById('cardPct').className = 'stat-card '+(pp>=0?'green':'red');
+
+  // ── Saúde da carteira ──
+  const s = health.summary;
+  document.getElementById('healthSummary').innerHTML = s.total ? `
+    <div class="health-summary">
+      <span class="hs-pill green">✅ ${s.well} indo bem</span>
+      <span class="hs-pill yellow">⚖️ ${s.neutral} neutro${s.neutral!==1?'s':''}</span>
+      <span class="hs-pill red">⚠️ ${s.bad} atenção</span>
+    </div>` : '';
+
+  const wellHtml  = renderHealthSection(health.well,    '✅ Indo Bem',    'positive');
+  const badHtml   = renderHealthSection(health.bad,     '⚠️ Atenção',     'negative');
+  const neutHtml  = renderHealthSection(health.neutral, '⚖️ Neutros',     '');
+
+  document.getElementById('healthGrid').innerHTML = health.summary.total
+    ? `<div class="health-section">${wellHtml}${badHtml}</div>
+       <div class="health-section">${neutHtml}</div>`
+    : `<div class="empty" style="grid-column:1/-1"><div class="empty-icon">💼</div>Nenhum ativo na carteira</div>`;
+
+  // ── Oportunidades ──
+  if (opportunities.length) {
+    document.getElementById('opportunities').innerHTML = opportunities.map(o => {
+      const varCls = (o.variation_pct ?? 0) >= 0 ? 'positive' : 'negative';
+      const conf   = Math.round(o.confidence);
+      return `<div class="opp-row">
+        <span class="opp-ticker">${o.ticker}</span>
+        <div class="opp-body">
+          <div class="opp-name">${o.name}</div>
+          <div class="opp-meta">
+            <span class="opp-price">${fmt(o.price)}</span>
+            <span class="mono ${varCls}" style="font-size:12px">${pct(o.variation_pct)}</span>
+            <span class="signal green">COMPRA ${conf}%</span>
+            ${o.rsi ? `<span style="font-size:11px;color:var(--text-muted)">RSI ${o.rsi.toFixed(0)}</span>` : ''}
+          </div>
+          <div class="opp-reason">${o.reason}</div>
+          <div class="conf-bar"><div class="conf-fill" style="width:${conf}%"></div></div>
+        </div>
+      </div>`;
+    }).join('');
+  } else {
+    document.getElementById('opportunities').innerHTML =
+      `<div class="empty"><div class="empty-icon">🎯</div>Nenhuma oportunidade de compra no momento</div>`;
+  }
+
+  // ── Transações ──
+  if (transactions.length) {
+    const rows = transactions.map(t => {
+      const cls = t.type === 'compra' ? 'green' : 'red';
+      return `<tr>
+        <td class="text-muted" style="font-size:11px">${new Date(t.date).toLocaleDateString('pt-BR')}</td>
+        <td class="ticker-cell">${t.ticker.replace('.SA','')}</td>
+        <td><span class="badge badge-${cls}">${t.type.toUpperCase()}</span></td>
+        <td class="mono">${Math.abs(t.quantity)}</td>
+        <td class="mono">${fmt(t.price)}</td>
+        <td class="mono">${fmt(t.total_value)}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('recentTrans').innerHTML =
+      `<div class="table-wrap"><table>
+        <thead><tr><th>Data</th><th>Ticker</th><th>Tipo</th><th>Qtd</th><th>Preço</th><th>Total</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`;
+  } else {
+    document.getElementById('recentTrans').innerHTML =
+      `<div class="empty"><div class="empty-icon">📋</div>Nenhuma transação</div>`;
+  }
+}
+
+function renderHealthSection(items, title, cls) {
+  if (!items.length) return '';
+  const rows = items.map(a => {
+    const pctCls = a.profit_pct >= 0 ? 'positive' : 'negative';
+    const tip    = a.reasons.join(' · ') || '—';
+    return `<div class="asset-row" title="${tip}">
+      <span class="asset-ticker">${a.ticker}</span>
+      <div style="flex:1;min-width:0">
+        <div class="asset-name">${a.name || a.ticker}</div>
+        ${a.reasons.length ? `<div class="asset-reasons">${a.reasons.slice(0,2).join(' · ')}</div>` : ''}
+      </div>
+      <span class="asset-pct ${pctCls}">${pct(a.profit_pct)}</span>
+    </div>`;
+  }).join('');
+  return `<h3>${title}</h3>${rows}`;
+}
+
+load(); setInterval(load, 60000);
+</script>
+</body>
+</html>

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Recomendações — Regulador Financeiro</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .rec-section-title {
+      font-size: 12px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .6px; color: var(--text-muted);
+      margin: 20px 0 10px; display: flex; align-items: center; gap: 8px;
+    }
+    .rec-section-title::after {
+      content: ''; flex: 1; height: 1px; background: var(--border-light);
+    }
+    .rec-portfolio-badge {
+      font-size: 10px; padding: 2px 7px; border-radius: 10px;
+      background: var(--blue-dim); color: var(--blue); font-weight: 600;
+    }
+    .rec-profit {
+      font-family: var(--mono); font-size: 11px; font-weight: 600;
+    }
+    .trend-up   { color: var(--green); }
+    .trend-down { color: var(--red); }
+    .trend-flat { color: var(--text-muted); }
+    .rsi-bar { height: 4px; border-radius: 2px; background: var(--border); margin-top: 4px; position: relative; }
+    .rsi-fill { height: 100%; border-radius: 2px; position: absolute; top: 0; left: 0; }
+    .filter-bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:4px; }
+    .filter-bar select, .filter-bar input { width:auto; min-width:120px; }
+    .summary-pills { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+    .pill { padding:5px 14px; border-radius:20px; font-size:12px; font-weight:600; cursor:pointer;
+            border:1px solid transparent; transition:var(--transition); }
+    .pill.green  { background:var(--green-dim);  color:var(--green);  border-color:rgba(63,185,80,.3); }
+    .pill.red    { background:var(--red-dim);    color:var(--red);    border-color:rgba(248,81,73,.3); }
+    .pill.yellow { background:var(--yellow-dim); color:var(--yellow); border-color:rgba(210,153,34,.3); }
+    .pill.muted  { background:var(--bg); color:var(--text-muted); border-color:var(--border); }
+    .pill.active { outline: 2px solid currentColor; outline-offset: 1px; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="header-brand">
+    <div class="logo">📊</div>
+    <div><h1>Regulador Financeiro</h1></div>
+  </div>
+  <span class="header-time" id="clock"></span>
+</header>
+
+<nav>
+  <a href="/">⬛ Dashboard</a>
+  <a href="/market">📈 Mercado</a>
+  <a href="/portfolio">💼 Carteira</a>
+  <a href="/transactions">📋 Transações</a>
+  <a href="/recommendations" class="active">💡 Recomendações</a>
+  <a href="/settings">⚙️ Tickers</a>
+</nav>
+
+<div class="container">
+
+  <div class="card">
+    <div class="card-header">
+      <h2>💡 Recomendações de Investimento</h2>
+      <div class="filter-bar">
+        <input type="text" id="searchInput" placeholder="🔍 Buscar ticker…"
+               oninput="render()" style="max-width:160px">
+        <select id="typeFilter" onchange="render()">
+          <option value="">Todos os tipos</option>
+          <option value="Ação">Ações</option>
+          <option value="FII">FIIs</option>
+        </select>
+        <select id="portFilter" onchange="render()">
+          <option value="">Carteira + Mercado</option>
+          <option value="portfolio">Só minha carteira</option>
+          <option value="market">Só mercado</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="load()">↻ Atualizar</button>
+      </div>
+    </div>
+
+    <div id="summaryPills" class="summary-pills"></div>
+    <div id="content"><div class="loading"><div class="spinner"></div></div></div>
+  </div>
+
+</div>
+
+<script src="/static/script.js"></script>
+<script>
+const fmt = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v ?? 0);
+const pct = (v, sign=true) => v != null ? (sign&&v>=0?'+':'')+Number(v).toFixed(2)+'%' : '—';
+
+function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR'); }
+tick(); setInterval(tick, 1000);
+
+let _data = [];
+let _activeFilter = '';
+
+function setFilter(f) {
+  _activeFilter = _activeFilter === f ? '' : f;
+  document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.f === _activeFilter));
+  render();
+}
+
+async function load() {
+  document.getElementById('content').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  document.getElementById('summaryPills').innerHTML = '';
+  const res = await fetch('/api/recommendations/full').then(r=>r.json()).catch(()=>null);
+  if (!res?.success) {
+    document.getElementById('content').innerHTML =
+      '<div class="empty"><div class="empty-icon">⚠️</div>Erro ao carregar recomendações</div>';
+    return;
+  }
+  _data = res.data;
+
+  const buy  = _data.filter(r => r.recommendation === 'COMPRA').length;
+  const sell = _data.filter(r => r.recommendation === 'VENDA').length;
+  const hold = _data.filter(r => r.recommendation === 'MANUTENÇÃO').length;
+
+  document.getElementById('summaryPills').innerHTML = `
+    <span class="pill green ${_activeFilter==='COMPRA'?'active':''}" data-f="COMPRA"
+          onclick="setFilter('COMPRA')">✅ ${buy} Compra${buy!==1?'s':''}</span>
+    <span class="pill yellow ${_activeFilter==='MANUTENÇÃO'?'active':''}" data-f="MANUTENÇÃO"
+          onclick="setFilter('MANUTENÇÃO')">⚖️ ${hold} Manutenção</span>
+    <span class="pill red ${_activeFilter==='VENDA'?'active':''}" data-f="VENDA"
+          onclick="setFilter('VENDA')">⚠️ ${sell} Venda${sell!==1?'s':''}</span>
+    <span class="pill muted ${_activeFilter===''?'active':''}" data-f=""
+          onclick="setFilter('')">Todos (${_data.length})</span>`;
+
+  render();
+}
+
+function render() {
+  const q    = document.getElementById('searchInput').value.toUpperCase();
+  const type = document.getElementById('typeFilter').value;
+  const port = document.getElementById('portFilter').value;
+
+  let list = _data;
+  if (_activeFilter) list = list.filter(r => r.recommendation === _activeFilter);
+  if (q)    list = list.filter(r => r.ticker.includes(q) || (r.name||'').toUpperCase().includes(q));
+  if (type) list = list.filter(r => r.type === type);
+  if (port === 'portfolio') list = list.filter(r => r.in_portfolio);
+  if (port === 'market')    list = list.filter(r => !r.in_portfolio);
+
+  if (!list.length) {
+    document.getElementById('content').innerHTML =
+      '<div class="empty"><div class="empty-icon">💡</div>Nenhuma recomendação para os filtros selecionados</div>';
+    return;
+  }
+
+  const sections = [
+    { key: 'COMPRA',     label: '✅ Comprar agora',  items: list.filter(r => r.recommendation === 'COMPRA') },
+    { key: 'MANUTENÇÃO', label: '⚖️ Manter posição', items: list.filter(r => r.recommendation === 'MANUTENÇÃO') },
+    { key: 'VENDA',      label: '⚠️ Aguardar / Vender', items: list.filter(r => r.recommendation === 'VENDA') },
+  ];
+
+  let html = '';
+  for (const sec of sections) {
+    if (!sec.items.length) continue;
+    html += `<div class="rec-section-title">${sec.label} <span style="color:var(--text-dim);font-size:11px">${sec.items.length}</span></div>`;
+    html += `<div class="rec-grid">`;
+    for (const r of sec.items) html += buildCard(r);
+    html += `</div>`;
+  }
+
+  document.getElementById('content').innerHTML = html;
+}
+
+function buildCard(r) {
+  const cls = r.recommendation === 'COMPRA' ? 'compra' : r.recommendation === 'VENDA' ? 'venda' : 'manutencao';
+  const confCls = cls === 'compra' ? 'green' : cls === 'venda' ? 'red' : 'yellow';
+  const varCls  = (r.variation_pct ?? 0) >= 0 ? 'trend-up' : 'trend-down';
+  const v7Cls   = (r.variation_7d ?? 0) >= 0 ? 'trend-up' : 'trend-down';
+  const v30Cls  = (r.variation_30d ?? 0) >= 0 ? 'trend-up' : 'trend-down';
+
+  // RSI color
+  const rsi = r.rsi ?? 50;
+  const rsiColor = rsi < 35 ? 'var(--green)' : rsi > 65 ? 'var(--red)' : 'var(--yellow)';
+  const rsiLabel = rsi < 35 ? 'Sobrevendido' : rsi > 65 ? 'Sobrecomprado' : 'Neutro';
+
+  // Trend vs SMAs
+  let trendHtml = '';
+  if (r.sma20 && r.sma50 && r.price) {
+    const aboveBoth = r.price > r.sma20 && r.sma20 > r.sma50;
+    const belowBoth = r.price < r.sma20 && r.sma20 < r.sma50;
+    trendHtml = aboveBoth
+      ? `<span class="trend-up" style="font-size:10px">▲ Tendência alta (preço > SMA20 > SMA50)</span>`
+      : belowBoth
+      ? `<span class="trend-down" style="font-size:10px">▼ Tendência baixa (preço < SMA20 < SMA50)</span>`
+      : `<span class="trend-flat" style="font-size:10px">→ Sem tendência clara nas médias</span>`;
+  }
+
+  // MACD
+  let macdHtml = '';
+  if (r.macd != null && r.macd_signal != null) {
+    const macdCls = r.macd > r.macd_signal ? 'trend-up' : 'trend-down';
+    const macdDir = r.macd > r.macd_signal ? '▲' : '▼';
+    macdHtml = `<span class="${macdCls}" style="font-size:10px">${macdDir} MACD ${r.macd > 0 ? '+' : ''}${r.macd.toFixed(3)} / Sinal ${r.macd_signal.toFixed(3)}</span>`;
+  }
+
+  // Bollinger
+  let bbHtml = '';
+  if (r.bb_lower != null && r.bb_upper != null && r.price != null) {
+    const f2 = v => Number(v).toFixed(2);
+    if (r.price <= r.bb_lower) {
+      bbHtml = `<span class="trend-up" style="font-size:10px">▼ BB inferior — sobrevendido (${f2(r.bb_lower)})</span>`;
+    } else if (r.price >= r.bb_upper) {
+      bbHtml = `<span class="trend-down" style="font-size:10px">▲ BB superior — sobrecomprado (${f2(r.bb_upper)})</span>`;
+    } else {
+      const pos = ((r.price - r.bb_lower) / (r.bb_upper - r.bb_lower) * 100).toFixed(0);
+      bbHtml = `<span class="trend-flat" style="font-size:10px">→ Bollinger ${pos}% da banda (${f2(r.bb_lower)}–${f2(r.bb_upper)})</span>`;
+    }
+  }
+
+  const portfolioBadge = r.in_portfolio
+    ? `<span class="rec-portfolio-badge">Na carteira${r.profit_pct != null ? ' · '+(r.profit_pct>=0?'+':'')+r.profit_pct.toFixed(1)+'%' : ''}</span>`
+    : '';
+
+  const volTrend = r.volume_trend ?? 0;
+  const volHtml = `<span class="${volTrend > 10 ? 'trend-up' : volTrend < -10 ? 'trend-down' : 'trend-flat'}"
+    style="font-size:10px">${volTrend > 10 ? '▲' : volTrend < -10 ? '▼' : '→'} Volume ${volTrend >= 0 ? '+' : ''}${volTrend.toFixed(0)}%</span>`;
+
+  return `<div class="rec-card ${cls}">
+    <div class="rec-card-header">
+      <div>
+        <div class="rec-ticker">${r.ticker} ${portfolioBadge}</div>
+        <div class="rec-name">${r.name || ''}</div>
+      </div>
+      <span class="rec-rec ${cls}">${r.recommendation}</span>
+    </div>
+
+    <div class="rec-meta">
+      <div class="rec-meta-item">
+        <span class="rec-meta-label">Preço</span>
+        <span class="rec-meta-value">${r.price != null ? fmt(r.price) : '—'}</span>
+      </div>
+      <div class="rec-meta-item">
+        <span class="rec-meta-label">Hoje</span>
+        <span class="rec-meta-value ${varCls}">${pct(r.variation_pct)}</span>
+      </div>
+      <div class="rec-meta-item">
+        <span class="rec-meta-label">7 dias</span>
+        <span class="rec-meta-value ${v7Cls}">${pct(r.variation_7d)}</span>
+      </div>
+      <div class="rec-meta-item">
+        <span class="rec-meta-label">30 dias</span>
+        <span class="rec-meta-value ${v30Cls}">${pct(r.variation_30d)}</span>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:4px 0">
+      <div style="flex:1;min-width:80px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:2px">
+          <span>RSI ${rsi.toFixed(0)} — ${rsiLabel}</span>
+        </div>
+        <div class="rsi-bar">
+          <div class="rsi-fill" style="width:${rsi}%;background:${rsiColor}"></div>
+        </div>
+      </div>
+      ${volHtml}
+    </div>
+
+    ${trendHtml ? `<div style="margin:2px 0">${trendHtml}</div>` : ''}
+    ${macdHtml  ? `<div style="margin:2px 0">${macdHtml}</div>`  : ''}
+    ${bbHtml    ? `<div style="margin:2px 0">${bbHtml}</div>`    : ''}
+
+    <div style="margin-top:6px">
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px">Confiança ${r.confidence.toFixed(0)}%</div>
+      <div class="confidence-bar">
+        <div class="confidence-fill ${confCls}" style="width:${r.confidence}%"></div>
+      </div>
+    </div>
+
+    <div class="rec-reason">${r.reason}</div>
+  </div>`;
+}
+
+load(); setInterval(load, 60000);
+</script>
+</body>
+</html>

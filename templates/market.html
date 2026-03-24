@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mercado — Regulador Financeiro</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="header-brand">
+    <div class="logo">📊</div>
+    <div><h1>Regulador Financeiro</h1></div>
+  </div>
+  <span class="header-time" id="clock"></span>
+</header>
+
+<nav>
+  <a href="/">⬛ Dashboard</a>
+  <a href="/market" class="active">📈 Mercado</a>
+  <a href="/portfolio">💼 Carteira</a>
+  <a href="/transactions">📋 Transações</a>
+  <a href="/recommendations">💡 Recomendações</a>
+  <a href="/settings">⚙️ Tickers</a>
+</nav>
+
+<div class="container">
+  <div class="card">
+    <div class="card-header">
+      <h2>📈 Mercado <span id="lastUpdate" class="small text-muted" style="font-weight:400"></span></h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="loadingBadge" class="badge badge-blue hidden">Atualizando…</span>
+        <button class="btn btn-ghost btn-sm" onclick="load(true)">↻ Atualizar</button>
+      </div>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="search" placeholder="🔍 Buscar ticker ou nome…" oninput="filter()">
+      <select id="typeFilter" onchange="filter()">
+        <option value="">Todos</option>
+        <option value="Ação">Ações</option>
+        <option value="FII">FIIs</option>
+      </select>
+      <select id="sortBy" onchange="filter()">
+        <option value="ticker">Ordenar: Ticker</option>
+        <option value="price">Ordenar: Preço</option>
+        <option value="change">Ordenar: Variação</option>
+      </select>
+    </div>
+
+    <div id="marketTable" class="loading"><div class="spinner"></div><span>Buscando cotações…</span></div>
+  </div>
+</div>
+
+<script src="/static/script.js"></script>
+<script>
+const fmt  = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v);
+const fmtN = v => new Intl.NumberFormat('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
+
+function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR'); }
+tick(); setInterval(tick, 1000);
+
+let allAssets = [];
+
+async function load(force = false) {
+  document.getElementById('loadingBadge').classList.remove('hidden');
+
+  // 1. Força atualização no servidor se solicitado
+  if (force) {
+    await fetch('/api/tickers/refresh', {method:'POST'}).catch(()=>{});
+  }
+
+  // 2. Busca cotações do banco (já atualizadas pelo scheduler ou pelo refresh acima)
+  const res = await fetch('/api/market').then(r=>r.json()).catch(()=>null);
+  if (!res?.success) {
+    document.getElementById('marketTable').innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div>Erro ao carregar dados</div>`;
+    document.getElementById('loadingBadge').classList.add('hidden');
+    return;
+  }
+
+  // 3. Garante que todos os tickers monitorados estejam presentes
+  const tickersRes = await fetch('/api/tickers').then(r=>r.json()).catch(()=>null);
+  const monitored = tickersRes?.data || [];
+
+  // Mescla: dados do banco + tickers sem cotação ainda
+  const dbMap = Object.fromEntries(res.data.map(a => [a.ticker, a]));
+  allAssets = monitored.map(t => {
+    const key = t.ticker + '.SA';
+    return dbMap[key] || {
+      ticker: key,
+      name: t.name,
+      type: t.type,
+      current_price: null,
+      variation_percent: null,
+      variation_value: null,
+      last_update: null,
+    };
+  });
+
+  document.getElementById('lastUpdate').textContent =
+    '— atualizado ' + new Date().toLocaleTimeString('pt-BR');
+  document.getElementById('loadingBadge').classList.add('hidden');
+  filter();
+}
+
+function filter() {
+  const q    = document.getElementById('search').value.toUpperCase();
+  const type = document.getElementById('typeFilter').value;
+  const sort = document.getElementById('sortBy').value;
+
+  let list = allAssets.filter(a => {
+    const matchQ = !q || a.ticker.includes(q) || (a.name||'').toUpperCase().includes(q);
+    const matchT = !type || a.type === type;
+    return matchQ && matchT;
+  });
+
+  if (sort === 'price')  list.sort((a,b) => (b.current_price||0) - (a.current_price||0));
+  if (sort === 'change') list.sort((a,b) => (b.variation_percent||0) - (a.variation_percent||0));
+  if (sort === 'ticker') list.sort((a,b) => a.ticker.localeCompare(b.ticker));
+
+  if (!list.length) {
+    document.getElementById('marketTable').innerHTML =
+      `<div class="empty"><div class="empty-icon">📭</div>Nenhum ativo encontrado</div>`;
+    return;
+  }
+
+  const rows = list.map(a => {
+    const vp  = a.variation_percent;
+    const vv  = a.variation_value;
+    const hasData = vp !== null && vp !== undefined;
+    const cls  = hasData ? (vp >= 0 ? 'positive' : 'negative') : 'text-muted';
+    const arrow = hasData ? (vp >= 0 ? '▲' : '▼') : '';
+    const typeCls = a.type === 'FII' ? 'badge-yellow' : 'badge-blue';
+    const updated = a.last_update
+      ? new Date(a.last_update).toLocaleTimeString('pt-BR')
+      : '<span class="text-muted">—</span>';
+
+    return `<tr>
+      <td class="ticker-cell">${a.ticker.replace('.SA','')}</td>
+      <td class="text-muted">${a.name||'—'}</td>
+      <td><span class="badge ${typeCls}">${a.type||'—'}</span></td>
+      <td class="mono">${hasData ? fmt(a.current_price) : '<span class="text-muted">—</span>'}</td>
+      <td class="mono ${cls}">${hasData ? arrow+' '+fmt(Math.abs(vv)) : '—'}</td>
+      <td class="mono ${cls}">${hasData ? arrow+' '+Math.abs(vp).toFixed(2)+'%' : '—'}</td>
+      <td class="small text-muted">${updated}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('marketTable').innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Ticker</th><th>Nome</th><th>Tipo</th>
+          <th>Preço</th><th>Var. R$</th><th>Var. %</th><th>Atualizado</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+load();
+setInterval(() => load(), 60000);
+</script>
+</body>
+</html>

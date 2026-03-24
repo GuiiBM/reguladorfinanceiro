@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tickers — Regulador Financeiro</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .section-label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .7px; color: var(--text-muted);
+      margin: 20px 0 10px; display: flex; align-items: center; gap: 8px;
+    }
+    .section-label::after {
+      content: ''; flex: 1; height: 1px; background: var(--border-light);
+    }
+
+    .ticker-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 240px));
+      gap: 10px;
+    }
+
+    .tk-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: border-color var(--transition), background var(--transition);
+      position: relative;
+    }
+    .tk-card:hover { border-color: var(--accent); background: var(--bg-hover); }
+
+    .tk-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .tk-symbol {
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--blue);
+      line-height: 1.2;
+    }
+    .tk-name {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.4;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .tk-price-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 2px;
+    }
+    .tk-price {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .tk-var {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .tk-var.up   { color: var(--green); }
+    .tk-var.down { color: var(--red); }
+    .tk-var.flat { color: var(--text-muted); }
+
+    .tk-remove {
+      position: absolute;
+      top: 8px; right: 8px;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 13px;
+      padding: 2px 4px;
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity var(--transition), color var(--transition);
+    }
+    .tk-card:hover .tk-remove { opacity: 1; }
+    .tk-remove:hover { color: var(--red); }
+
+    .how-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+    }
+    .how-item-title {
+      font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 5px;
+    }
+
+    .add-form {
+      display: grid;
+      grid-template-columns: 1fr 2fr auto auto;
+      gap: 10px;
+      align-items: flex-end;
+    }
+    @media (max-width: 700px) {
+      .add-form { grid-template-columns: 1fr 1fr; }
+      .add-form button { grid-column: span 1; }
+      .ticker-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+    }
+    @media (max-width: 420px) {
+      .add-form { grid-template-columns: 1fr; }
+      .ticker-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="header-brand">
+    <div class="logo">📊</div>
+    <div><h1>Regulador Financeiro</h1></div>
+  </div>
+  <span class="header-time" id="clock"></span>
+</header>
+
+<nav>
+  <a href="/">⬛ Dashboard</a>
+  <a href="/market">📈 Mercado</a>
+  <a href="/portfolio">💼 Carteira</a>
+  <a href="/transactions">📋 Transações</a>
+  <a href="/recommendations">💡 Recomendações</a>
+  <a href="/settings" class="active">⚙️ Tickers</a>
+</nav>
+
+<div class="container">
+
+  <!-- ADICIONAR -->
+  <div class="card">
+    <h2>➕ Adicionar Ticker</h2>
+    <p class="small mb-16">Digite o código do ativo (sem .SA). O sistema valida automaticamente na B3.</p>
+    <div id="addMsg"></div>
+    <div class="add-form">
+      <div class="form-group" style="margin:0">
+        <label>Ticker</label>
+        <input type="text" id="newTicker" placeholder="Ex: MGLU3"
+               oninput="this.value=this.value.toUpperCase(); document.getElementById('addBtn').disabled=true; document.getElementById('preview').innerHTML=''">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Nome <span class="text-muted">(opcional)</span></label>
+        <input type="text" id="newName" placeholder="Deixe em branco para usar o nome da B3">
+      </div>
+      <button class="btn btn-ghost" onclick="previewTicker()">🔍 Verificar</button>
+      <button class="btn btn-primary" id="addBtn" disabled onclick="addTicker()">+ Adicionar</button>
+    </div>
+    <div id="preview" class="mt-8"></div>
+  </div>
+
+  <!-- LISTA -->
+  <div class="card">
+    <div class="card-header">
+      <h2>📋 Tickers Monitorados <span class="small text-muted" id="tickerCount" style="font-weight:400;margin-left:4px"></span></h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="filterInput" placeholder="🔍 Filtrar…"
+               oninput="renderList()" style="width:180px">
+        <select id="filterType" onchange="renderList()" style="width:auto">
+          <option value="">Todos</option>
+          <option value="Ação">Ações</option>
+          <option value="FII">FIIs</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="refresh()" id="refreshBtn">↻ Atualizar Dados</button>
+      </div>
+    </div>
+    <div id="refreshMsg"></div>
+    <div id="tickerList"><div class="loading"><div class="spinner"></div></div></div>
+  </div>
+
+  <!-- COMO USAR -->
+  <div class="card">
+    <h2>📖 Como usar</h2>
+    <div class="how-grid">
+      <div>
+        <div class="how-item-title">➕ Adicionar ativo</div>
+        <div class="small">Digite o ticker (ex: <code style="color:var(--blue)">MGLU3</code>), clique em <strong>Verificar</strong> para confirmar na B3, depois em <strong>Adicionar</strong>.</div>
+      </div>
+      <div>
+        <div class="how-item-title">🗑 Remover ativo</div>
+        <div class="small">Passe o mouse sobre o card e clique no ✕. O ativo sai do monitoramento mas permanece na sua carteira.</div>
+      </div>
+      <div>
+        <div class="how-item-title">↻ Atualizar dados</div>
+        <div class="small">Clique em <strong>Atualizar Dados</strong> para forçar busca imediata de cotações para todos os tickers.</div>
+      </div>
+      <div>
+        <div class="how-item-title">📁 Edição manual</div>
+        <div class="small">Edite <code style="color:var(--blue)">tickers.json</code> na raiz do projeto e reinicie a aplicação para mudanças em lote.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="/static/script.js"></script>
+<script>
+const fmt = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v ?? 0);
+
+function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR'); }
+tick(); setInterval(tick, 1000);
+
+function showMsg(id, text, ok) {
+  const el = document.getElementById(id);
+  el.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger');
+  el.textContent = text;
+  setTimeout(() => { el.className = ''; el.textContent = ''; }, 5000);
+}
+
+let allTickers = [];
+let assetPrices = {};  // ticker -> {price, variation}
+
+async function loadList() {
+  const [tickRes, mktRes] = await Promise.all([
+    fetch('/api/tickers').then(r => r.json()).catch(() => null),
+    fetch('/api/market').then(r => r.json()).catch(() => null),
+  ]);
+  if (!tickRes?.success) return;
+
+  allTickers = tickRes.data;
+
+  // Monta mapa de preços
+  assetPrices = {};
+  (mktRes?.data || []).forEach(a => {
+    const base = a.ticker.replace('.SA', '');
+    assetPrices[base] = { price: a.current_price, variation: a.variation_percent };
+  });
+
+  document.getElementById('tickerCount').textContent =
+    `— ${allTickers.length} ativo${allTickers.length !== 1 ? 's' : ''}`;
+  renderList();
+}
+
+function renderList() {
+  const q    = document.getElementById('filterInput').value.toUpperCase();
+  const type = document.getElementById('filterType').value;
+
+  let list = allTickers;
+  if (q)    list = list.filter(a => a.ticker.includes(q) || a.name.toUpperCase().includes(q));
+  if (type) list = list.filter(a => a.type === type);
+
+  if (!list.length) {
+    document.getElementById('tickerList').innerHTML =
+      '<div class="empty"><div class="empty-icon">📭</div>Nenhum ticker encontrado</div>';
+    return;
+  }
+
+  const acoes = list.filter(a => a.type !== 'FII');
+  const fiis  = list.filter(a => a.type === 'FII');
+
+  let html = '';
+
+  if (acoes.length) {
+    html += `<div class="section-label">🏢 Ações <span style="color:var(--text-dim)">${acoes.length}</span></div>`;
+    html += `<div class="ticker-grid">${acoes.map(buildCard).join('')}</div>`;
+  }
+  if (fiis.length) {
+    html += `<div class="section-label">🏗 Fundos Imobiliários <span style="color:var(--text-dim)">${fiis.length}</span></div>`;
+    html += `<div class="ticker-grid">${fiis.map(buildCard).join('')}</div>`;
+  }
+
+  document.getElementById('tickerList').innerHTML = html;
+}
+
+function buildCard(a) {
+  const p    = assetPrices[a.ticker];
+  const typeCls = a.type === 'FII' ? 'badge-yellow' : 'badge-blue';
+
+  let priceHtml = '<span class="tk-price" style="color:var(--text-dim)">—</span>';
+  let varHtml   = '';
+  if (p?.price) {
+    const v   = p.variation ?? 0;
+    const cls = v > 0 ? 'up' : v < 0 ? 'down' : 'flat';
+    const sym = v > 0 ? '▲' : v < 0 ? '▼' : '→';
+    priceHtml = `<span class="tk-price">${fmt(p.price)}</span>`;
+    varHtml   = `<span class="tk-var ${cls}">${sym} ${Math.abs(v).toFixed(2)}%</span>`;
+  }
+
+  return `<div class="tk-card">
+    <button class="tk-remove" onclick="removeTicker('${a.ticker}')" title="Remover">✕</button>
+    <div class="tk-top">
+      <div>
+        <div class="tk-symbol">${a.ticker}</div>
+        <div class="tk-name">${a.name}</div>
+      </div>
+      <span class="badge ${typeCls}" style="font-size:10px;flex-shrink:0;margin-top:2px">${a.type}</span>
+    </div>
+    <div class="tk-price-row">
+      ${priceHtml}
+      ${varHtml}
+    </div>
+  </div>`;
+}
+
+async function previewTicker() {
+  const ticker = document.getElementById('newTicker').value.trim().toUpperCase().replace('.SA', '');
+  if (!ticker) return;
+  const prev = document.getElementById('preview');
+  prev.innerHTML = `<div class="small text-muted">Verificando ${ticker} na B3…</div>`;
+  document.getElementById('addBtn').disabled = true;
+
+  const res = await fetch('/api/market/fetch/' + ticker).then(r => r.json());
+  if (res.success) {
+    const d = res.data;
+    const v = d.variation_percent;
+    const vCls = v >= 0 ? 'positive' : 'negative';
+    prev.innerHTML = `<div class="alert alert-info">
+      ✓ <strong>${d.ticker}</strong> — ${d.name}
+      &nbsp;|&nbsp; ${fmt(d.current_price)}
+      &nbsp;<span class="${vCls}">${v >= 0 ? '+' : ''}${v.toFixed(2)}%</span>
+    </div>`;
+    document.getElementById('addBtn').disabled = false;
+    if (!document.getElementById('newName').value)
+      document.getElementById('newName').placeholder = d.name;
+  } else {
+    prev.innerHTML = `<div class="alert alert-danger">⚠ ${ticker} não encontrado na B3.</div>`;
+  }
+}
+
+async function addTicker() {
+  const ticker = document.getElementById('newTicker').value.trim().toUpperCase();
+  const name   = document.getElementById('newName').value.trim();
+  if (!ticker) return;
+
+  const res = await fetch('/api/tickers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ticker, name }),
+  }).then(r => r.json());
+
+  showMsg('addMsg', res.message, res.success);
+  if (res.success) {
+    document.getElementById('newTicker').value = '';
+    document.getElementById('newName').value   = '';
+    document.getElementById('newName').placeholder = 'Deixe em branco para usar o nome da B3';
+    document.getElementById('preview').innerHTML   = '';
+    document.getElementById('addBtn').disabled = true;
+    loadList();
+  }
+}
+
+async function removeTicker(ticker) {
+  if (!confirm(`Remover ${ticker} da lista de monitoramento?`)) return;
+  const res = await fetch('/api/tickers/' + ticker, { method: 'DELETE' }).then(r => r.json());
+  showMsg('addMsg', res.message, res.success);
+  if (res.success) loadList();
+}
+
+async function refresh() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.textContent = 'Atualizando…';
+  const res = await fetch('/api/tickers/refresh', { method: 'POST' }).then(r => r.json());
+  showMsg('refreshMsg', res.message, res.success);
+  btn.disabled = false;
+  btn.textContent = '↻ Atualizar Dados';
+  loadList();
+}
+
+// Enter no campo ticker dispara verificação
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('newTicker').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); previewTicker(); }
+  });
+});
+
+loadList();
+</script>
+</body>
+</html>

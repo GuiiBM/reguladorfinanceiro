@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transações — Regulador Financeiro</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .edit-row td { background: var(--bg-hover); }
+    .edit-row input, .edit-row select {
+      padding: 4px 8px; font-size: 12px; height: 30px;
+    }
+    .actions { display:flex; gap:4px; }
+    tr.fade-out { opacity:0; transition: opacity .3s; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="header-brand">
+    <div class="logo">📊</div>
+    <div><h1>Regulador Financeiro</h1></div>
+  </div>
+  <span class="header-time" id="clock"></span>
+</header>
+
+<nav>
+  <a href="/">⬛ Dashboard</a>
+  <a href="/market">📈 Mercado</a>
+  <a href="/portfolio">💼 Carteira</a>
+  <a href="/transactions" class="active">📋 Transações</a>
+  <a href="/recommendations">💡 Recomendações</a>
+  <a href="/settings">⚙️ Tickers</a>
+</nav>
+
+<div class="container">
+  <div class="card">
+    <div class="card-header">
+      <h2>📋 Transações</h2>
+      <span id="count" class="small text-muted"></span>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="tickerFilter" placeholder="🔍 Filtrar por ticker…" oninput="render()">
+      <select id="typeFilter" onchange="render()">
+        <option value="">Todos os tipos</option>
+        <option value="compra">Compras</option>
+        <option value="venda">Vendas</option>
+      </select>
+      <input type="date" id="dateFrom" onchange="render()" title="De">
+      <input type="date" id="dateTo"   onchange="render()" title="Até">
+      <button class="btn btn-ghost btn-sm" onclick="load()">↻</button>
+    </div>
+
+    <div id="globalMsg"></div>
+    <div id="table" class="loading"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- MODAL EDIÇÃO -->
+<div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;align-items:center;justify-content:center">
+  <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:100%;max-width:440px;margin:16px">
+    <h2 style="font-size:14px;margin-bottom:16px">✏️ Editar Transação</h2>
+    <div id="modalMsg"></div>
+    <div class="form-group">
+      <label>Ticker</label>
+      <input type="text" id="eTicker" style="text-transform:uppercase">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Tipo</label>
+        <select id="eType">
+          <option value="compra">Compra</option>
+          <option value="venda">Venda</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Data</label>
+        <input type="date" id="eDate">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Quantidade</label>
+        <input type="number" id="eQty" step="0.01" min="0.01">
+      </div>
+      <div class="form-group">
+        <label>Preço (R$)</label>
+        <input type="number" id="ePrice" step="0.01" min="0.01">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveEdit()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/script.js"></script>
+<script>
+const fmt = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v);
+
+function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR'); }
+tick(); setInterval(tick, 1000);
+
+let allTrans = [], editingId = null;
+
+function gMsg(text, ok) {
+  const el = document.getElementById('globalMsg');
+  el.className = 'alert ' + (ok ? 'alert-success' : 'alert-danger');
+  el.textContent = text;
+  setTimeout(() => { el.className=''; el.textContent=''; }, 4000);
+}
+
+async function load() {
+  const res = await fetch('/api/portfolio/transactions').then(r=>r.json());
+  if (!res.success) return;
+  allTrans = res.data;
+  render();
+}
+
+function render() {
+  const kf   = document.getElementById('tickerFilter').value.toUpperCase();
+  const tf   = document.getElementById('typeFilter').value;
+  const from = document.getElementById('dateFrom').value;
+  const to   = document.getElementById('dateTo').value;
+
+  let list = allTrans.filter(t => {
+    const d = t.date?.slice(0,10) || '';
+    return (!kf || t.ticker.includes(kf))
+        && (!tf || t.type === tf)
+        && (!from || d >= from)
+        && (!to   || d <= to);
+  });
+
+  document.getElementById('count').textContent = `${list.length} registro${list.length!==1?'s':''}`;
+
+  if (!list.length) {
+    document.getElementById('table').innerHTML =
+      `<div class="empty"><div class="empty-icon">📋</div>Nenhuma transação encontrada</div>`;
+    return;
+  }
+
+  const rows = list.map(t => {
+    const cls = t.type==='compra' ? 'green' : 'red';
+    const pl  = t.profit_loss;
+    const qty = Math.abs(t.quantity);
+    return `<tr id="row-${t.id}">
+      <td class="small text-muted">${t.date?.slice(0,10) || '—'}</td>
+      <td class="ticker-cell">${t.ticker.replace('.SA','')}</td>
+      <td><span class="badge badge-${cls}">${t.type.toUpperCase()}</span></td>
+      <td class="mono">${qty % 1 === 0 ? qty : qty.toFixed(2)}</td>
+      <td class="mono">${fmt(t.price)}</td>
+      <td class="mono">${fmt(t.total_value)}</td>
+      <td class="mono ${pl!=null?(pl>=0?'positive':'negative'):'text-muted'}">${pl!=null?fmt(pl):'—'}</td>
+      <td>
+        <div class="actions">
+          <button class="btn btn-ghost btn-icon btn-sm" title="Editar" onclick="openEdit(${t.id})">✏️</button>
+          <button class="btn btn-danger btn-icon btn-sm" title="Excluir" onclick="del(${t.id})">🗑</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('table').innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>Data</th><th>Ticker</th><th>Tipo</th>
+        <th>Qtd</th><th>Preço</th><th>Total</th><th>G/P</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+function openEdit(id) {
+  const t = allTrans.find(x => x.id === id);
+  if (!t) return;
+  editingId = id;
+  document.getElementById('eTicker').value = t.ticker.replace('.SA','');
+  document.getElementById('eType').value   = t.type;
+  document.getElementById('eDate').value   = t.date?.slice(0,10) || '';
+  document.getElementById('eQty').value    = Math.abs(t.quantity);
+  document.getElementById('ePrice').value  = t.price;
+  document.getElementById('modalMsg').className = '';
+  document.getElementById('modalMsg').textContent = '';
+  document.getElementById('modal').style.display = 'flex';
+}
+
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+  editingId = null;
+}
+
+async function saveEdit() {
+  const ticker = document.getElementById('eTicker').value.trim().toUpperCase();
+  const type   = document.getElementById('eType').value;
+  const date   = document.getElementById('eDate').value || null;
+  const qty    = parseFloat(document.getElementById('eQty').value);
+  const price  = parseFloat(document.getElementById('ePrice').value);
+
+  if (!ticker || !qty || !price) {
+    document.getElementById('modalMsg').className = 'alert alert-danger';
+    document.getElementById('modalMsg').textContent = 'Preencha todos os campos obrigatórios.';
+    return;
+  }
+
+  const quantity = type === 'venda' ? -Math.abs(qty) : Math.abs(qty);
+  const res = await fetch(`/api/portfolio/transactions/${editingId}`, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ticker: ticker.endsWith('.SA') ? ticker : ticker+'.SA', type, quantity, price, date})
+  }).then(r=>r.json());
+
+  if (res.success) {
+    closeModal();
+    gMsg('Transação atualizada.', true);
+    load();
+  } else {
+    document.getElementById('modalMsg').className = 'alert alert-danger';
+    document.getElementById('modalMsg').textContent = res.message;
+  }
+}
+
+async function del(id) {
+  if (!confirm('Excluir esta transação? Esta ação não pode ser desfeita.')) return;
+  const row = document.getElementById('row-'+id);
+  if (row) row.classList.add('fade-out');
+  const res = await fetch(`/api/portfolio/transactions/${id}`, {method:'DELETE'}).then(r=>r.json());
+  if (res.success) {
+    gMsg('Transação excluída.', true);
+    load();
+  } else {
+    if (row) row.classList.remove('fade-out');
+    gMsg(res.message, false);
+  }
+}
+
+// Fecha modal clicando fora
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal')) closeModal();
+});
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
