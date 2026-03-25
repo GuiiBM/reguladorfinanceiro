@@ -65,7 +65,12 @@ header {
   position: sticky;
   top: 0;
   z-index: 100;
-  backdrop-filter: blur(8px);
+}
+
+.header-time {
+  font-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .header-brand {
@@ -615,6 +620,67 @@ button:disabled, .btn:disabled { opacity: .4; cursor: not-allowed; }
   border-top: 1px solid var(--border-light);
   margin: 16px 0;
 }
+
+/* ── DISCLAIMER GLOBAL ────────────────────────────── */
+.disclaimer-bar {
+  background: rgba(210,153,34,.08);
+  border-bottom: 1px solid rgba(210,153,34,.2);
+  padding: 6px 24px;
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.disclaimer-bar strong { color: var(--yellow); font-weight: 600; }
+
+/* ── NOTICE INLINE ─────────────────────────────────── */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+.notice.warning {
+  background: rgba(210,153,34,.08);
+  border: 1px solid rgba(210,153,34,.25);
+  color: var(--text-muted);
+}
+.notice.warning strong { color: var(--yellow); }
+.notice.info {
+  background: rgba(88,166,255,.07);
+  border: 1px solid rgba(88,166,255,.2);
+  color: var(--text-muted);
+}
+.notice.info strong { color: var(--blue); }
+.notice-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+
+/* ── MONTH CHIPS (dividends por ativo) ─────────────── */
+.paid-months-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+.m-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 20px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: -.3px;
+}
+.m-chip.paid   { background: rgba(63,185,80,.18);  color: var(--green); }
+.m-chip.unpaid { background: rgba(255,255,255,.04); color: var(--text-dim); }
 
 /* ── UTILS ─────────────────────────────────────────── */
 .text-center { text-align: center; }

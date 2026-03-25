@@ -6,12 +6,83 @@
   <title>Transações — Regulador Financeiro</title>
   <link rel="stylesheet" href="/static/style.css">
   <style>
-    .edit-row td { background: var(--bg-hover); }
-    .edit-row input, .edit-row select {
-      padding: 4px 8px; font-size: 12px; height: 30px;
+    /* ── STATS ── */
+    .tx-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:20px; }
+
+    /* ── CHART ── */
+    .bar-chart { display:flex; align-items:flex-end; gap:4px; height:56px; margin-top:8px; }
+    .bar-wrap  { display:flex; flex-direction:column; align-items:center; gap:3px; flex:1; }
+    .bar       { width:100%; border-radius:3px 3px 0 0; min-height:2px; transition:height .3s; }
+    .bar.buy   { background:var(--green); opacity:.8; }
+    .bar.sell  { background:var(--red);   opacity:.8; }
+    .bar-lbl   { font-size:9px; color:var(--text-muted); font-family:var(--mono); white-space:nowrap; }
+
+    /* ── FILTERS ── */
+    .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+    .filters input, .filters select { padding:7px 11px; font-size:12px; border:1px solid var(--border);
+      border-radius:var(--radius); background:var(--bg-input); color:var(--text); }
+    .filters input:focus, .filters select:focus { border-color:var(--accent); outline:none; }
+    .filter-chip { padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; cursor:pointer;
+      border:1px solid var(--border); background:transparent; color:var(--text-muted); transition:var(--transition); }
+    .filter-chip.active-buy  { background:var(--green-dim);  color:var(--green);  border-color:rgba(63,185,80,.4); }
+    .filter-chip.active-sell { background:var(--red-dim);    color:var(--red);    border-color:rgba(248,81,73,.4); }
+    .filter-chip.active-all  { background:var(--blue-dim);   color:var(--blue);   border-color:rgba(88,166,255,.4); }
+
+    /* ── GROUP HEADER ── */
+    .group-header { display:flex; align-items:center; gap:10px; padding:6px 0; margin:16px 0 8px;
+      font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.5px; }
+    .group-header::after { content:''; flex:1; height:1px; background:var(--border-light); }
+
+    /* ── TX GRID ── */
+    .tx-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:8px; }
+
+    .tx-card {
+      position:relative; padding:12px 14px 10px;
+      border-radius:var(--radius); background:var(--bg);
+      border:1px solid var(--border-light);
+      transition:border-color var(--transition), box-shadow var(--transition), background var(--transition);
+      overflow:hidden;
     }
-    .actions { display:flex; gap:4px; }
-    tr.fade-out { opacity:0; transition: opacity .3s; }
+    .tx-card::before {
+      content:''; position:absolute; top:0; left:0; right:0; height:2px;
+    }
+    .tx-card.buy::before  { background:var(--green); }
+    .tx-card.sell::before { background:var(--red); }
+    .tx-card:hover {
+      border-color:var(--border);
+      background:var(--bg-hover);
+      box-shadow:0 4px 16px rgba(0,0,0,.25);
+    }
+    .tx-card:hover .tx-actions { opacity:1; }
+
+    /* row 1: ticker + badge + total */
+    .tx-row1 { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+    .tx-ticker { font-family:var(--mono); font-weight:700; font-size:15px; color:var(--text); flex:1; }
+    .tx-badge  { font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; flex-shrink:0; }
+    .tx-badge.buy  { background:var(--green-dim); color:var(--green); }
+    .tx-badge.sell { background:var(--red-dim);   color:var(--red); }
+    .tx-total  { font-family:var(--mono); font-size:13px; font-weight:700; flex-shrink:0; }
+    .tx-total.buy  { color:var(--green); }
+    .tx-total.sell { color:var(--red); }
+
+    /* row 2: meta pills */
+    .tx-meta { display:flex; gap:6px; flex-wrap:wrap; }
+    .tx-pill {
+      display:inline-flex; align-items:center; gap:4px;
+      padding:2px 8px; border-radius:6px; font-size:11px;
+      background:rgba(255,255,255,.04); color:var(--text-muted);
+      font-family:var(--mono);
+    }
+    .tx-pill .pi { font-size:10px; opacity:.6; }
+
+    /* row 3: G/P + actions */
+    .tx-footer { display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
+    .tx-pl { font-size:11px; font-family:var(--mono); font-weight:600; }
+    .tx-actions { display:flex; gap:3px; opacity:0; transition:opacity var(--transition); }
+
+    /* ── EMPTY ── */
+    .empty-state { text-align:center; padding:48px 20px; color:var(--text-muted); }
+    .empty-state .ei { font-size:40px; margin-bottom:10px; opacity:.3; }
   </style>
 </head>
 <body>
@@ -22,6 +93,8 @@
   </div>
   <span class="header-time" id="clock"></span>
 </header>
+
+<div class="disclaimer-bar">⚠️ <strong>Aviso:</strong> Esta plataforma é apenas informativa. Nenhum resultado é garantido. Dados obtidos por meios públicos com possível atraso. Não constitui recomendação de investimento.</div>
 
 <nav>
   <a href="/">⬛ Dashboard</a>
@@ -34,27 +107,63 @@
 </nav>
 
 <div class="container">
-  <div class="card">
-    <div class="card-header">
-      <h2>📋 Transações</h2>
-      <span id="count" class="small text-muted"></span>
-    </div>
 
-    <div class="controls">
-      <input type="text" id="tickerFilter" placeholder="🔍 Filtrar por ticker…" oninput="render()">
-      <select id="typeFilter" onchange="render()">
-        <option value="">Todos os tipos</option>
-        <option value="compra">Compras</option>
-        <option value="venda">Vendas</option>
-      </select>
-      <input type="date" id="dateFrom" onchange="render()" title="De">
-      <input type="date" id="dateTo"   onchange="render()" title="Até">
-      <button class="btn btn-ghost btn-sm" onclick="load()">↻</button>
+  <!-- STATS -->
+  <div class="tx-stats" id="txStats">
+    <div class="stat-card blue">
+      <div class="stat-label">Total de Operações</div>
+      <div class="stat-value" id="stTotal">—</div>
     </div>
-
-    <div id="globalMsg"></div>
-    <div id="table" class="loading"><div class="spinner"></div></div>
+    <div class="stat-card green">
+      <div class="stat-label">Volume Comprado</div>
+      <div class="stat-value" id="stBuyVol">—</div>
+      <div class="stat-sub" id="stBuyCount"></div>
+    </div>
+    <div class="stat-card red">
+      <div class="stat-label">Volume Vendido</div>
+      <div class="stat-value" id="stSellVol">—</div>
+      <div class="stat-sub" id="stSellCount"></div>
+    </div>
+    <div class="stat-card" id="stPlCard">
+      <div class="stat-label">Ganho / Perda Realizado</div>
+      <div class="stat-value" id="stPL">—</div>
+    </div>
   </div>
+
+  <!-- GRÁFICO MENSAL -->
+  <div class="card" id="chartCard" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <h2 style="margin:0;font-size:13px">📊 Volume Mensal</h2>
+      <div style="display:flex;gap:12px;font-size:11px;color:var(--text-muted)">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:var(--green);display:inline-block"></span>Compras</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:var(--red);display:inline-block"></span>Vendas</span>
+      </div>
+    </div>
+    <div class="bar-chart" id="barChart"></div>
+  </div>
+
+  <!-- FILTROS -->
+  <div class="card" style="padding:14px 16px">
+    <div class="filters">
+      <button class="filter-chip active-all" id="chipAll"  onclick="setType('')">Todos</button>
+      <button class="filter-chip" id="chipBuy"  onclick="setType('compra')">🟢 Compras</button>
+      <button class="filter-chip" id="chipSell" onclick="setType('venda')">🔴 Vendas</button>
+      <input type="text"  id="tickerFilter" placeholder="🔍 Ticker…" oninput="render()" style="max-width:130px">
+      <input type="date"  id="dateFrom" onchange="render()" title="De">
+      <input type="date"  id="dateTo"   onchange="render()" title="Até">
+      <button class="btn btn-ghost btn-sm" onclick="clearFilters()">✕ Limpar</button>
+      <button class="btn btn-ghost btn-sm" onclick="load()">↻</button>
+      <span class="small text-muted" id="count" style="margin-left:auto"></span>
+    </div>
+  </div>
+
+  <div id="globalMsg"></div>
+
+  <!-- LISTA -->
+  <div id="txContainer">
+    <div class="card"><div class="loading"><div class="spinner"></div></div></div>
+  </div>
+
 </div>
 
 <!-- MODAL EDIÇÃO -->
@@ -98,12 +207,15 @@
 
 <script src="/static/script.js"></script>
 <script>
-const fmt = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v);
+const fmt    = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v ?? 0);
+const fmtN   = v => v % 1 === 0 ? v : Number(v).toFixed(2);
+const fmtDate = s => s ? new Date(s+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+const fmtDateShort = s => s ? new Date(s+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}) : '—';
 
 function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR'); }
 tick(); setInterval(tick, 1000);
 
-let allTrans = [], editingId = null;
+let allTrans = [], editingId = null, activeType = '';
 
 function gMsg(text, ok) {
   const el = document.getElementById('globalMsg');
@@ -119,57 +231,155 @@ async function load() {
   render();
 }
 
+function setType(t) {
+  activeType = t;
+  document.getElementById('chipAll').className  = 'filter-chip' + (t===''       ? ' active-all'  : '');
+  document.getElementById('chipBuy').className  = 'filter-chip' + (t==='compra' ? ' active-buy'  : '');
+  document.getElementById('chipSell').className = 'filter-chip' + (t==='venda'  ? ' active-sell' : '');
+  render();
+}
+
+function clearFilters() {
+  document.getElementById('tickerFilter').value = '';
+  document.getElementById('dateFrom').value = '';
+  document.getElementById('dateTo').value   = '';
+  setType('');
+}
+
 function render() {
   const kf   = document.getElementById('tickerFilter').value.toUpperCase();
-  const tf   = document.getElementById('typeFilter').value;
   const from = document.getElementById('dateFrom').value;
   const to   = document.getElementById('dateTo').value;
 
-  let list = allTrans.filter(t => {
+  const list = allTrans.filter(t => {
     const d = t.date?.slice(0,10) || '';
-    return (!kf || t.ticker.includes(kf))
-        && (!tf || t.type === tf)
-        && (!from || d >= from)
-        && (!to   || d <= to);
+    return (!kf         || t.ticker.includes(kf))
+        && (!activeType || t.type === activeType)
+        && (!from       || d >= from)
+        && (!to         || d <= to);
   });
+
+  // ── Stats (sempre sobre lista completa filtrada por tipo/ticker/data) ──
+  const buys  = list.filter(t => t.type === 'compra');
+  const sells = list.filter(t => t.type === 'venda');
+  const buyVol  = buys.reduce((s,t)  => s + Math.abs(t.total_value), 0);
+  const sellVol = sells.reduce((s,t) => s + Math.abs(t.total_value), 0);
+  const pl      = list.reduce((s,t)  => s + (t.profit_loss ?? 0), 0);
+
+  document.getElementById('stTotal').textContent    = list.length;
+  document.getElementById('stBuyVol').textContent   = fmt(buyVol);
+  document.getElementById('stBuyCount').textContent = `${buys.length} operaç${buys.length!==1?'ões':'ão'}`;
+  document.getElementById('stSellVol').textContent  = fmt(sellVol);
+  document.getElementById('stSellCount').textContent= `${sells.length} operaç${sells.length!==1?'ões':'ão'}`;
+  document.getElementById('stPL').textContent       = fmt(pl);
+  document.getElementById('stPL').className         = 'stat-value ' + (pl >= 0 ? 'positive' : 'negative');
+  document.getElementById('stPlCard').className     = 'stat-card '  + (pl >= 0 ? 'green'    : 'red');
 
   document.getElementById('count').textContent = `${list.length} registro${list.length!==1?'s':''}`;
 
+  // ── Gráfico mensal ──
+  renderChart(list);
+
+  // ── Lista agrupada por mês ──
   if (!list.length) {
-    document.getElementById('table').innerHTML =
-      `<div class="empty"><div class="empty-icon">📋</div>Nenhuma transação encontrada</div>`;
+    document.getElementById('txContainer').innerHTML =
+      `<div class="card"><div class="empty-state"><div class="ei">📋</div>Nenhuma transação encontrada</div></div>`;
     return;
   }
 
-  const rows = list.map(t => {
-    const cls = t.type==='compra' ? 'green' : 'red';
-    const pl  = t.profit_loss;
-    const qty = Math.abs(t.quantity);
-    return `<tr id="row-${t.id}">
-      <td class="small text-muted">${t.date?.slice(0,10) || '—'}</td>
-      <td class="ticker-cell">${t.ticker.replace('.SA','')}</td>
-      <td><span class="badge badge-${cls}">${t.type.toUpperCase()}</span></td>
-      <td class="mono">${qty % 1 === 0 ? qty : qty.toFixed(2)}</td>
-      <td class="mono">${fmt(t.price)}</td>
-      <td class="mono">${fmt(t.total_value)}</td>
-      <td class="mono ${pl!=null?(pl>=0?'positive':'negative'):'text-muted'}">${pl!=null?fmt(pl):'—'}</td>
-      <td>
-        <div class="actions">
-          <button class="btn btn-ghost btn-icon btn-sm" title="Editar" onclick="openEdit(${t.id})">✏️</button>
-          <button class="btn btn-danger btn-icon btn-sm" title="Excluir" onclick="del(${t.id})">🗑</button>
+  // Agrupa por mês (YYYY-MM)
+  const groups = {};
+  list.forEach(t => {
+    const key = (t.date || '').slice(0,7) || 'sem-data';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  });
+
+  const sortedKeys = Object.keys(groups).sort((a,b) => b.localeCompare(a));
+
+  let html = '';
+  sortedKeys.forEach(key => {
+    const items = groups[key];
+    const label = key === 'sem-data' ? 'Sem data' : (() => {
+      const [y,m] = key.split('-');
+      return new Date(+y, +m-1, 1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+    })();
+    const groupVol = items.reduce((s,t) => s + Math.abs(t.total_value), 0);
+    const groupPL  = items.reduce((s,t) => s + (t.profit_loss ?? 0), 0);
+    const hasPL    = items.some(t => t.profit_loss != null);
+
+    html += `<div class="group-header">${label}
+      <span style="font-size:10px;font-weight:400;color:var(--text-dim)">${items.length} op. · ${fmt(groupVol)}${hasPL ? ' · G/P <span class="'+(groupPL>=0?'positive':'negative')+'">'+fmt(groupPL)+'</span>' : ''}</span>
+    </div>
+    <div class="tx-list">`;
+
+    items.forEach(t => {
+      const isBuy = t.type === 'compra';
+      const qty   = fmtN(Math.abs(t.quantity));
+      const pl    = t.profit_loss;
+      const ds    = fmtDateShort(t.date?.slice(0,10));
+      html += `
+      <div class="tx-card ${isBuy?'buy':'sell'}">
+        <div class="tx-row1">
+          <span class="tx-ticker">${t.ticker.replace('.SA','')}</span>
+          <span class="tx-badge ${isBuy?'buy':'sell'}">${isBuy?'COMPRA':'VENDA'}</span>
+          <span class="tx-total ${isBuy?'buy':'sell'}">${isBuy?'+':'−'}${fmt(Math.abs(t.total_value))}</span>
         </div>
-      </td>
-    </tr>`;
+        <div class="tx-meta">
+          <span class="tx-pill">${ds}</span>
+          <span class="tx-pill">${qty} cotas</span>
+          <span class="tx-pill">@ ${fmt(t.price)}</span>
+        </div>
+        <div class="tx-footer">
+          ${pl != null ? `<span class="tx-pl ${pl>=0?'positive':'negative'}">${pl>=0?'▲':'▼'} ${fmt(Math.abs(pl))}</span>` : '<span></span>'}
+          <div class="tx-actions">
+            <button class="btn btn-ghost btn-icon btn-sm" title="Editar" onclick="openEdit(${t.id})">&#9998;</button>
+            <button class="btn btn-danger btn-icon btn-sm" title="Excluir" onclick="del(${t.id})">&#128465;</button>
+          </div>
+        </div>
+      </div>`;
+    });
+
+    html += `</div>`;
+  });
+
+  document.getElementById('txContainer').innerHTML = html;
+}
+
+function renderChart(list) {
+  const card = document.getElementById('chartCard');
+  if (!list.length) { card.style.display='none'; return; }
+
+  const monthly = {};
+  list.forEach(t => {
+    const key = (t.date||'').slice(0,7);
+    if (!key) return;
+    if (!monthly[key]) monthly[key] = {buy:0, sell:0};
+    if (t.type==='compra') monthly[key].buy  += Math.abs(t.total_value);
+    else                   monthly[key].sell += Math.abs(t.total_value);
+  });
+
+  const keys = Object.keys(monthly).sort().slice(-12);
+  if (!keys.length) { card.style.display='none'; return; }
+
+  const maxVal = Math.max(...keys.map(k => Math.max(monthly[k].buy, monthly[k].sell)), 1);
+
+  const bars = keys.map(k => {
+    const d = monthly[k];
+    const bh = Math.max(Math.round((d.buy  / maxVal) * 52), d.buy  > 0 ? 2 : 0);
+    const sh = Math.max(Math.round((d.sell / maxVal) * 52), d.sell > 0 ? 2 : 0);
+    const lbl = k.slice(5); // MM
+    return `<div class="bar-wrap">
+      <div style="display:flex;gap:2px;align-items:flex-end;height:52px">
+        <div class="bar buy"  style="height:${bh}px;width:10px" title="Compras ${k}: ${fmt(d.buy)}"></div>
+        <div class="bar sell" style="height:${sh}px;width:10px" title="Vendas ${k}: ${fmt(d.sell)}"></div>
+      </div>
+      <div class="bar-lbl">${lbl}</div>
+    </div>`;
   }).join('');
 
-  document.getElementById('table').innerHTML = `
-    <div class="table-wrap"><table>
-      <thead><tr>
-        <th>Data</th><th>Ticker</th><th>Tipo</th>
-        <th>Qtd</th><th>Preço</th><th>Total</th><th>G/P</th><th></th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
+  document.getElementById('barChart').innerHTML = bars;
+  card.style.display = '';
 }
 
 function openEdit(id) {
@@ -211,11 +421,8 @@ async function saveEdit() {
     body: JSON.stringify({ticker: ticker.endsWith('.SA') ? ticker : ticker+'.SA', type, quantity, price, date})
   }).then(r=>r.json());
 
-  if (res.success) {
-    closeModal();
-    gMsg('Transação atualizada.', true);
-    load();
-  } else {
+  if (res.success) { closeModal(); gMsg('Transação atualizada.', true); load(); }
+  else {
     document.getElementById('modalMsg').className = 'alert alert-danger';
     document.getElementById('modalMsg').textContent = res.message;
   }
@@ -223,19 +430,11 @@ async function saveEdit() {
 
 async function del(id) {
   if (!confirm('Excluir esta transação? Esta ação não pode ser desfeita.')) return;
-  const row = document.getElementById('row-'+id);
-  if (row) row.classList.add('fade-out');
   const res = await fetch(`/api/portfolio/transactions/${id}`, {method:'DELETE'}).then(r=>r.json());
-  if (res.success) {
-    gMsg('Transação excluída.', true);
-    load();
-  } else {
-    if (row) row.classList.remove('fade-out');
-    gMsg(res.message, false);
-  }
+  if (res.success) { gMsg('Transação excluída.', true); load(); }
+  else gMsg(res.message, false);
 }
 
-// Fecha modal clicando fora
 document.getElementById('modal').addEventListener('click', e => {
   if (e.target === document.getElementById('modal')) closeModal();
 });

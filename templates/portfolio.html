@@ -99,6 +99,7 @@
   <span class="header-time" id="clock"></span>
 </header>
 
+<div class="disclaimer-bar">⚠️ <strong>Aviso:</strong> Esta plataforma é apenas informativa. Nenhum resultado é garantido. Dados obtidos por meios públicos com possível atraso. Não constitui recomendação de investimento.</div>
 <nav>
   <a href="/">⬛ Dashboard</a>
   <a href="/market">📈 Mercado</a>
@@ -136,6 +137,10 @@
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
       <h2 style="margin:0">💰 Projeção de Dividendos</h2>
       <span class="small text-muted" id="divDisclaimer">Estimativa baseada em histórico — dados com atraso</span>
+    </div>
+    <div class="notice warning" style="margin-bottom:14px">
+      <span class="notice-icon">⚠️</span>
+      <span><strong>Projeção não garantida.</strong> Os valores abaixo são estimativas baseadas no histórico de pagamentos. Dividendos futuros dependem de decisões das empresas e podem ser alterados ou cancelados a qualquer momento.</span>
     </div>
     <div class="stats-grid" style="margin-bottom:16px">
       <div class="stat-card blue">
@@ -896,12 +901,10 @@ function toggleDivDetails() {
 function _divRow(d) {
   const monthly = d.monthly_avg_total != null ? fmt(d.monthly_avg_total) : '—';
   const annual  = d.annual_total != null ? fmt(d.annual_total) : '—';
-  const count   = d.months_paid || 0;
-  const sigCls  = count >= 10 ? 'green' : count >= 6 ? 'yellow' : 'red';
   const LABELS  = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
   let badge;
-  if (count > 0 && d.paid_months && d.paid_months.length) {
+  if (d.paid_months && d.paid_months.length) {
     const paidSet = new Set(d.paid_months);
     const last    = d.paid_months[d.paid_months.length - 1];
     const [ly, lm] = last.split('-').map(Number);
@@ -911,22 +914,21 @@ function _divRow(d) {
       if (m <= 0) { m += 12; y--; }
       last12.push(`${y}-${String(m).padStart(2,'0')}`);
     }
+    const paidInWindow = last12.filter(k => paidSet.has(k)).length;
+    const sigCls = paidInWindow >= 10 ? 'green' : paidInWindow >= 6 ? 'yellow' : 'red';
     const chips = last12.map(key => {
       const lbl = LABELS[parseInt(key.split('-')[1]) - 1];
       return `<span class="month-chip${paidSet.has(key) ? '' : ' empty'}" title="${key}">${lbl}</span>`;
     }).join('');
-    const rangeLabel = `${last12[0].substring(0,7)} → ${last12[11].substring(0,7)}`;
     badge = `<span class="months-tip">
-      <span class="signal ${sigCls}">${count}/12 meses</span>
+      <span class="signal ${sigCls}">${paidInWindow}/12 meses</span>
       <div class="months-pop">
         <div class="months-pop-title">Últimos 12 meses</div>
         <div class="months-grid">${chips}</div>
       </div>
     </span>`;
   } else {
-    badge = count > 0
-      ? `<span class="signal ${sigCls}">${count}/12 meses</span>`
-      : '<span class="signal red">sem dados</span>';
+    badge = '<span class="signal red">sem dados</span>';
   }
 
   return `<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap">

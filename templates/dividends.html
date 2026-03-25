@@ -118,6 +118,7 @@
   <span class="header-time" id="clock"></span>
 </header>
 
+<div class="disclaimer-bar">⚠️ <strong>Aviso:</strong> Esta plataforma é apenas informativa. Nenhum resultado é garantido. Dados obtidos por meios públicos com possível atraso. Não constitui recomendação de investimento.</div>
 <nav>
   <a href="/">⬛ Dashboard</a>
   <a href="/market">📈 Mercado</a>
@@ -136,6 +137,11 @@
     <div class="div-refresh">
       <button class="btn btn-primary" id="refreshBtn" onclick="loadData()">🔄 Atualizar</button>
     </div>
+  </div>
+
+  <div class="notice warning">
+    <span class="notice-icon">🔮</span>
+    <span><strong>Especulação baseada em histórico.</strong> Os próximos pagamentos e projeções são estimativas calculadas a partir dos <strong>3 últimos meses</strong> de dados disponíveis. Não há garantia de que os valores ou datas se confirmarão. Consulte sempre o site oficial da empresa ou da B3.</span>
   </div>
 
   <!-- RESUMO RÁPIDO -->
@@ -472,16 +478,32 @@ function renderAssets() {
 
   document.getElementById('assetsBody').innerHTML = summary.map((a, i) => {
     const dyClass = a.dy >= 8 ? 'positive' : a.dy >= 6 ? 'neutral' : 'negative';
-    const monthsLabel = a.paid_months && a.paid_months.length
-      ? a.paid_months.map(m => { const [y,mo] = m.split('-'); return `${mo}/${y}`; }).join(', ')
-      : null;
+    const MO_LABELS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    let monthsHtml = '';
+    if (a.paid_months && a.paid_months.length) {
+      const paidSet = new Set(a.paid_months);
+      const last    = a.paid_months[a.paid_months.length - 1];
+      const [ly, lm] = last.split('-').map(Number);
+      const last12  = [];
+      for (let i = 11; i >= 0; i--) {
+        let m = lm - i, y = ly;
+        if (m <= 0) { m += 12; y--; }
+        last12.push(`${y}-${String(m).padStart(2,'0')}`);
+      }
+      const chips = last12.map(key => {
+        const lbl = MO_LABELS[parseInt(key.split('-')[1]) - 1];
+        const paid = paidSet.has(key);
+        return `<span class="m-chip ${paid ? 'paid' : 'unpaid'}" title="${key}">${lbl}</span>`;
+      }).join('');
+      monthsHtml = `<div class="paid-months-wrap">${chips}</div>`;
+    }
     return `
       <tr style="animation: fadeInUp 0.3s ease-out ${i * 30}ms both;">
         <td class="ticker-badge">${a.ticker}</td>
         <td><span class="type-badge ${a.is_fii ? 'fii' : 'stock'}">${a.is_fii ? 'FII' : 'Ação'}</span></td>
         <td>${a.quantity}</td>
         <td class="mono ${dyClass}">${pct(a.dy)}</td>
-        <td class="value-positive" ${monthsLabel ? `title="Meses pagos: ${monthsLabel}" style="cursor:help;border-bottom:1px dotted var(--green)"` : ''}>${fmt(a.total_12m)}</td>
+        <td class="value-positive">${fmt(a.total_12m)}${monthsHtml}</td>
         <td>${a.next_pay_date ? fmtDate(a.next_pay_date) : '—'}</td>
         <td class="value-positive">${a.next_pay_value ? fmt(a.next_pay_value) : '—'}</td>
       </tr>
