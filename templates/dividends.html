@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dividendos - Regulador Financeiro</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/dividends.css">
+  <style>
+    .div-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    .div-header h1 { font-size: 24px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .div-refresh { display: flex; gap: 8px; }
+    .div-refresh button { padding: 8px 14px; font-size: 12px; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .summary-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; }
+    .summary-card.highlight { border-color: var(--blue); background: rgba(88,166,255,.08); }
+    .summary-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
+    .summary-value { font-size: 20px; font-weight: 700; font-family: var(--mono); color: var(--text); }
+    .summary-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+    .controls-bar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+    .controls-bar select, .controls-bar input { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text); font-size: 12px; }
+    .controls-bar label { font-size: 12px; color: var(--text-muted); margin: 0; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 6px; }
+
+    .tabs { display: flex; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+    .tab-btn { padding: 12px 16px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent; transition: var(--transition); }
+    .tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .tab-btn:hover { color: var(--text); }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── CALENDÁRIO ────────────────────────────────────── */
+    .calendar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 20px; }
+    .calendar-day { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; text-align: center; transition: var(--transition); }
+    .calendar-day:hover { border-color: var(--blue); background: var(--bg-hover); }
+    .calendar-day.past { opacity: .6; }
+    .calendar-day.today { border-color: var(--blue); background: rgba(88,166,255,.1); }
+    .calendar-day.future { border-color: var(--green); }
+    .calendar-date { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+    .calendar-ticker { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--blue); margin-bottom: 4px; }
+    .calendar-value { font-size: 14px; font-weight: 600; color: var(--green); }
+    .calendar-qty { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+    /* ── GRÁFICO ───────────────────────────────────────── */
+    .chart-container { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 20px; }
+    .chart-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 12px; }
+    #monthlyChart { max-height: 300px; }
+
+    /* ── TABELA ────────────────────────────────────────── */
+    .table-container { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead tr { border-bottom: 1px solid var(--border); }
+    th { padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; }
+    td { padding: 11px 12px; border-bottom: 1px solid var(--border-light); color: var(--text); }
+    tbody tr { transition: background var(--transition); }
+    tbody tr:hover { background: var(--bg-hover); }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .ticker-badge { font-family: var(--mono); font-weight: 700; color: var(--blue); }
+    .type-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .type-badge.fii { background: rgba(88,166,255,.15); color: var(--blue); }
+    .type-badge.stock { background: rgba(63,185,80,.15); color: var(--green); }
+    .status-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .status-badge.paid { background: rgba(63,185,80,.15); color: var(--green); }
+    .status-badge.upcoming { background: rgba(210,153,34,.15); color: var(--yellow); }
+
+    .value-positive { color: var(--green); font-weight: 600; }
+    .value-muted { color: var(--text-muted); }
+
+    /* ── EMPTY STATE ───────────────────────────────────── */
+    .empty { text-align: center; padding: 48px 20px; color: var(--text-muted); }
+    .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: .4; }
+    .empty-text { font-size: 14px; }
+
+    /* ── LOADING ───────────────────────────────────────── */
+    .loading-overlay { display: flex; align-items: center; justify-content: center; padding: 40px; }
+    .spinner { width: 28px; height: 28px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── EXPANDABLE ROWS ───────────────────────────────── */
+    .expandable-row { cursor: pointer; }
+    .expandable-row:hover { background: var(--bg-hover); }
+    .expand-icon { display: inline-block; transition: transform .2s; }
+    .expand-icon.open { transform: rotate(90deg); }
+    .expanded-content { display: none; background: var(--bg-hover); padding: 12px; border-radius: var(--radius); margin-top: 8px; font-size: 12px; }
+    .expanded-content.show { display: block; }
+
+    /* ── RESPONSIVE ────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .div-header { flex-direction: column; align-items: flex-start; }
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      .calendar-grid { grid-template-columns: repeat(2, 1fr); }
+      .controls-bar { flex-direction: column; }
+      .controls-bar select, .controls-bar input { width: 100%; }
+      table { font-size: 12px; }
+      th, td { padding: 8px 10px; }
+    }
+
+    @media (max-width: 480px) {
+      .summary-grid { grid-template-columns: 1fr; }
+      .calendar-grid { grid-template-columns: 1fr; }
+      .tabs { flex-wrap: wrap; }
+      .tab-btn { padding: 10px 12px; font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="header-brand">
+    <div class="logo">💰</div>
+    <div>
+      <h1>Dividendos</h1>
+      <p>Histórico e Projeção</p>
+    </div>
+  </div>
+  <span class="header-time" id="clock"></span>
+</header>
+
+<nav>
+  <a href="/">⬛ Dashboard</a>
+  <a href="/market">📈 Mercado</a>
+  <a href="/portfolio">💼 Carteira</a>
+  <a href="/transactions">📋 Transações</a>
+  <a href="/recommendations">💡 Recomendações</a>
+  <a href="/dividends" class="active">💰 Dividendos</a>
+  <a href="/settings">⚙️ Tickers</a>
+</nav>
+
+<div class="container">
+
+  <!-- HEADER COM REFRESH -->
+  <div class="div-header">
+    <h1>💰 Dividendos da Carteira</h1>
+    <div class="div-refresh">
+      <button class="btn btn-primary" id="refreshBtn" onclick="loadData()">🔄 Atualizar</button>
+    </div>
+  </div>
+
+  <!-- RESUMO RÁPIDO -->
+  <div class="summary-grid" id="summaryGrid">
+    <div class="loading-overlay"><div class="spinner"></div></div>
+  </div>
+
+  <!-- CONTROLES E FILTROS -->
+  <div class="card">
+    <div class="controls-bar">
+      <label>
+        <span>Tipo:</span>
+        <select id="filterType" onchange="applyFilters()">
+          <option value="">Todos</option>
+          <option value="fii">FIIs</option>
+          <option value="stock">Ações</option>
+        </select>
+      </label>
+      <label>
+        <span>Período:</span>
+        <select id="filterPeriod" onchange="applyFilters()">
+          <option value="all">Todos</option>
+          <option value="12m">Últimos 12 meses</option>
+          <option value="6m">Últimos 6 meses</option>
+          <option value="3m">Últimos 3 meses</option>
+          <option value="1m">Último mês</option>
+        </select>
+      </label>
+      <label>
+        <span>Ticker:</span>
+        <input type="text" id="filterTicker" placeholder="Ex: PETR4" onkeyup="applyFilters()" style="max-width: 120px;">
+      </label>
+      <button class="btn btn-ghost btn-sm" onclick="resetFilters()">Limpar filtros</button>
+    </div>
+  </div>
+
+  <!-- ABAS -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('upcoming')">📅 Próximos Pagamentos</button>
+    <button class="tab-btn" onclick="switchTab('history')">📊 Histórico Pago</button>
+    <button class="tab-btn" onclick="switchTab('assets')">📈 Por Ativo</button>
+  </div>
+
+  <!-- ABA: PRÓXIMOS PAGAMENTOS -->
+  <div id="upcoming" class="tab-content active card">
+    <h2>📅 Próximos Pagamentos</h2>
+    <div class="calendar-grid" id="upcomingCalendar">
+      <div class="loading-overlay"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- ABA: HISTÓRICO PAGO -->
+  <div id="history" class="tab-content card">
+    <h2>📊 Histórico de Dividendos Pagos</h2>
+    <div class="chart-container">
+      <div class="chart-title">Dividendos Mensais (últimos 12 meses)</div>
+      <canvas id="monthlyChart" width="400" height="200"></canvas>
+    </div>
+    <div class="table-container">
+      <table id="historyTable">
+        <thead>
+          <tr>
+            <th>Data Pagamento</th>
+            <th>Ticker</th>
+            <th>Tipo</th>
+            <th>Qtd</th>
+            <th>Valor/Ação</th>
+            <th>Total Recebido</th>
+          </tr>
+        </thead>
+        <tbody id="historyBody">
+          <tr><td colspan="6" class="text-center"><div class="loading-overlay"><div class="spinner"></div></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ABA: POR ATIVO -->
+  <div id="assets" class="tab-content card">
+    <h2>📈 Dividendos por Ativo</h2>
+    <div class="table-container">
+      <table id="assetsTable">
+        <thead>
+          <tr>
+            <th>Ticker</th>
+            <th>Tipo</th>
+            <th>Qtd</th>
+            <th>DY</th>
+            <th>Total 12m</th>
+            <th>Próximo Pagamento</th>
+            <th>Valor Próximo</th>
+          </tr>
+        </thead>
+        <tbody id="assetsBody">
+          <tr><td colspan="7" class="text-center"><div class="loading-overlay"><div class="spinner"></div></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script src="/static/script.js"></script>
+<script>
+const fmt = v => new Intl.NumberFormat('pt-BR', {style:'currency', currency:'BRL'}).format(v ?? 0);
+const pct = v => v != null ? Number(v).toFixed(2) + '%' : '—';
+const fmtDate = d => new Date(d).toLocaleDateString('pt-BR');
+
+let fullData = null;
+let filteredData = null;
+
+function tick() {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR');
+}
+tick();
+setInterval(tick, 1000);
+
+async function loadData() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Carregando...';
+
+  try {
+    const res = await fetch('/api/dividends/full').then(r => r.json()).catch(() => null);
+    if (!res?.success) {
+      alert('Erro ao carregar dividendos');
+      return;
+    }
+
+    fullData = res.data;
+    filteredData = JSON.parse(JSON.stringify(fullData));
+    renderAll();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 Atualizar';
+  }
+}
+
+function renderAll() {
+  renderSummary();
+  renderUpcoming();
+  renderHistory();
+  renderAssets();
+}
+
+function renderSummary() {
+  if (!fullData) return;
+  const s = fullData;
+  const next = s.upcoming[0];
+  const nextLabel = next
+    ? next.tickers.join(' + ') + ' \u2022 ' + fmtDate(next.pay_date)
+    : 'Nenhum agendado';
+
+  document.getElementById('summaryGrid').innerHTML = `
+    <div class="summary-card highlight">
+      <div class="summary-label">Total Recebido (todo período)</div>
+      <div class="summary-value value-positive">${fmt(s.total_all)}</div>
+      <div class="summary-sub">12m: ${fmt(s.total_12m)} &nbsp;|&nbsp; média ${fmt(s.avg_monthly)}/mês</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Pr\u00f3ximo Pagamento</div>
+      <div class="summary-value value-positive">${next ? fmt(next.total) : '\u2014'}</div>
+      <div class="summary-sub">${nextLabel}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Mensal M\u00e9dio Total</div>
+      <div class="summary-value">${fmt(s.proj_monthly_total)}</div>
+      <div class="summary-sub">
+        FIIs ${fmt(s.fii_proj_monthly)} &nbsp;|&nbsp; A\u00e7\u00f5es ${fmt(s.stock_proj_monthly)}
+      </div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">FIIs \u2014 Mensal Garantido</div>
+      <div class="summary-value value-positive">${fmt(s.fii_proj_monthly)}</div>
+      <div class="summary-sub">anual: ${fmt(s.fii_proj_monthly * 12)}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">A\u00e7\u00f5es \u2014 Mensal M\u00e9dio</div>
+      <div class="summary-value">${fmt(s.stock_proj_monthly)}</div>
+      <div class="summary-sub">anual: ${fmt(s.stock_proj_monthly * 12)}</div>
+    </div>
+  `;
+}
+
+function renderUpcoming() {
+  if (!filteredData?.upcoming) return;
+  const type  = document.getElementById('filterType').value;
+  const tkFilter = document.getElementById('filterTicker').value.toUpperCase();
+
+  // Filtra itens individuais dentro de cada grupo
+  const groups = filteredData.upcoming.map(g => {
+    const items = (g.items || []).filter(e => {
+      if (type === 'fii'   && !e.is_fii) return false;
+      if (type === 'stock' &&  e.is_fii) return false;
+      if (tkFilter && !e.ticker.includes(tkFilter)) return false;
+      return true;
+    });
+    if (!items.length) return null;
+    return {
+      pay_date: g.pay_date,
+      tickers:  items.map(e => e.ticker),
+      total:    items.reduce((s, e) => s + e.total, 0),
+      items,
+    };
+  }).filter(Boolean);
+
+  if (!groups.length) {
+    document.getElementById('upcomingCalendar').innerHTML =
+      `<div class="empty" style="grid-column:1/-1">
+        <div class="empty-icon">📅</div>
+        <div class="empty-text">Nenhum pagamento futuro agendado</div>
+      </div>`;
+    return;
+  }
+
+  document.getElementById('upcomingCalendar').innerHTML = groups.map((g, i) => {
+    const daysUntil = Math.ceil((new Date(g.pay_date) - new Date()) / 86400000);
+    const tickerBadges = g.tickers.map(t =>
+      `<span class="ticker-badge" style="display:inline-block;margin:1px 2px">${t}</span>`
+    ).join('');
+    const detail = g.items.map(e =>
+      `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">${e.ticker} ${fmt(e.total)}</div>`
+    ).join('');
+    return `
+      <div class="calendar-day future fade-in-up" style="animation-delay:${i*50}ms">
+        <div class="calendar-date">${fmtDate(g.pay_date)}</div>
+        <div style="margin:4px 0">${tickerBadges}</div>
+        <div class="calendar-value">${fmt(g.total)}</div>
+        ${g.items.length > 1 ? detail : ''}
+        <div class="status-indicator upcoming" style="margin-top:6px;font-size:10px">${daysUntil} dias</div>
+      </div>`;
+  }).join('');
+}
+
+function renderHistory() {
+  if (!filteredData?.paid_12m) return;
+  const paid = filteredData.paid_12m.filter(e => {
+    if (document.getElementById('filterType').value === 'fii' && !e.is_fii) return false;
+    if (document.getElementById('filterType').value === 'stock' && e.is_fii) return false;
+    if (document.getElementById('filterTicker').value && !e.ticker.includes(document.getElementById('filterTicker').value.toUpperCase())) return false;
+    return true;
+  });
+
+  // Tabela
+  if (!paid.length) {
+    document.getElementById('historyBody').innerHTML = `
+      <tr><td colspan="6" class="text-center empty-text">Nenhum dividendo pago no período</td></tr>
+    `;
+  } else {
+    document.getElementById('historyBody').innerHTML = paid.map(e => `
+      <tr>
+        <td>${fmtDate(e.pay_date)}</td>
+        <td class="ticker-badge">${e.ticker}</td>
+        <td><span class="type-badge ${e.is_fii ? 'fii' : 'stock'}">${e.is_fii ? 'FII' : 'Ação'}</span></td>
+        <td>${e.quantity}</td>
+        <td class="mono">${fmt(e.value_per_share)}</td>
+        <td class="value-positive">${fmt(e.total)}</td>
+      </tr>
+    `).join('');
+  }
+
+  // Gráfico mensal
+  renderMonthlyChart(paid);
+}
+
+function renderMonthlyChart(paid) {
+  const canvas = document.getElementById('monthlyChart');
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  const monthlyMap = {};
+
+  paid.forEach(e => {
+    const mo = e.pay_date.substring(0, 7);
+    monthlyMap[mo] = (monthlyMap[mo] || 0) + e.total;
+  });
+
+  const months = Object.keys(monthlyMap).sort();
+  const values = months.map(m => monthlyMap[m]);
+  const maxVal = Math.max(...values, 1);
+
+  // Limpar canvas
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const padding = 40;
+  const chartWidth = canvas.width - padding * 2;
+  const chartHeight = canvas.height - padding * 2;
+  const barWidth = chartWidth / months.length * 0.7;
+  const barGap = chartWidth / months.length;
+
+  // Eixos
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding, padding);
+  ctx.lineTo(padding, canvas.height - padding);
+  ctx.lineTo(canvas.width - padding, canvas.height - padding);
+  ctx.stroke();
+
+  // Barras
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+  months.forEach((m, i) => {
+    const barHeight = (values[i] / maxVal) * chartHeight;
+    const x = padding + i * barGap + (barGap - barWidth) / 2;
+    const y = canvas.height - padding - barHeight;
+    ctx.fillRect(x, y, barWidth, barHeight);
+  });
+
+  // Labels
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim();
+  ctx.font = '11px Inter';
+  ctx.textAlign = 'center';
+  months.forEach((m, i) => {
+    const x = padding + i * barGap + barGap / 2;
+    ctx.fillText(m.substring(5), x, canvas.height - padding + 16);
+  });
+}
+
+function renderAssets() {
+  if (!filteredData?.summary) return;
+  const summary = filteredData.summary.filter(a => {
+    if (document.getElementById('filterType').value === 'fii' && !a.is_fii) return false;
+    if (document.getElementById('filterType').value === 'stock' && a.is_fii) return false;
+    if (document.getElementById('filterTicker').value && !a.ticker.includes(document.getElementById('filterTicker').value.toUpperCase())) return false;
+    return true;
+  }).sort((a, b) => b.total_12m - a.total_12m);
+
+  if (!summary.length) {
+    document.getElementById('assetsBody').innerHTML = `
+      <tr><td colspan="7" class="text-center empty-text">Nenhum ativo encontrado</td></tr>
+    `;
+    return;
+  }
+
+  document.getElementById('assetsBody').innerHTML = summary.map((a, i) => {
+    const dyClass = a.dy >= 8 ? 'positive' : a.dy >= 6 ? 'neutral' : 'negative';
+    const monthsLabel = a.paid_months && a.paid_months.length
+      ? a.paid_months.map(m => { const [y,mo] = m.split('-'); return `${mo}/${y}`; }).join(', ')
+      : null;
+    return `
+      <tr style="animation: fadeInUp 0.3s ease-out ${i * 30}ms both;">
+        <td class="ticker-badge">${a.ticker}</td>
+        <td><span class="type-badge ${a.is_fii ? 'fii' : 'stock'}">${a.is_fii ? 'FII' : 'Ação'}</span></td>
+        <td>${a.quantity}</td>
+        <td class="mono ${dyClass}">${pct(a.dy)}</td>
+        <td class="value-positive" ${monthsLabel ? `title="Meses pagos: ${monthsLabel}" style="cursor:help;border-bottom:1px dotted var(--green)"` : ''}>${fmt(a.total_12m)}</td>
+        <td>${a.next_pay_date ? fmtDate(a.next_pay_date) : '—'}</td>
+        <td class="value-positive">${a.next_pay_value ? fmt(a.next_pay_value) : '—'}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(tab).classList.add('active');
+  event.target.classList.add('active');
+}
+
+function applyFilters() {
+  if (!fullData) return;
+  filteredData = JSON.parse(JSON.stringify(fullData));
+  renderUpcoming();
+  renderHistory();
+  renderAssets();
+}
+
+function resetFilters() {
+  document.getElementById('filterType').value = '';
+  document.getElementById('filterPeriod').value = 'all';
+  document.getElementById('filterTicker').value = '';
+  applyFilters();
+}
+
+// Carregar dados ao abrir
+loadData();
+setInterval(loadData, 300000); // Atualizar a cada 5 minutos
+
+// Suporte a atalhos de teclado
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === 'r') {
+      e.preventDefault();
+      loadData();
+    }
+  }
+});
+
+// Notificacao de proximos pagamentos
+function checkUpcomingPayments() {
+  if (!fullData?.upcoming) return;
+  const now = new Date();
+  const upcoming = fullData.upcoming.filter(e => {
+    const payDate = new Date(e.pay_date);
+    const daysUntil = (payDate - now) / (1000 * 60 * 60 * 24);
+    return daysUntil > 0 && daysUntil <= 7;
+  });
+  
+  if (upcoming.length > 0 && 'Notification' in window && Notification.permission === 'granted') {
+    const total = upcoming.reduce((sum, e) => sum + e.total, 0);
+    new Notification('Dividendos Proximos', {
+      body: `${upcoming.length} pagamento(s) nos proximos 7 dias: ${fmt(total)}`,
+      icon: '💰'
+    });
+  }
+}
+
+// Solicitar permissao para notificacoes
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
+
+// Verificar pagamentos proximos a cada hora
+setInterval(checkUpcomingPayments, 3600000);
+</script>
+</body>
+</html>

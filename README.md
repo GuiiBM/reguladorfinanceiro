@@ -1,6 +1,6 @@
 # Regulador Financeiro
 
-Aplicação web de monitoramento de mercado financeiro em tempo real (atraso de 15 min), com compra/venda de ações e FIIs, carteira, recomendações e análise técnica.
+Aplicação web de monitoramento de mercado financeiro em tempo real (atraso de 15 min), com compra/venda de ações e FIIs, carteira, recomendações, análise técnica e dividendos.
 
 ---
 
@@ -35,6 +35,7 @@ reguladorfinanceiro/
 ├── market_data.py          # Integração com yfinance
 ├── portfolio.py            # Lógica de carteira e transações
 ├── recommendations.py      # Engine de recomendações
+├── fundamentals.py         # Análise fundamentalista e dividendos
 ├── config.py               # Configurações
 ├── test.py                 # Testes automatizados
 ├── install.sh              # Instalação rápida
@@ -46,9 +47,11 @@ reguladorfinanceiro/
 │   ├── market.html         # Mercado
 │   ├── portfolio.html      # Carteira
 │   ├── transactions.html   # Transações
-│   └── recommendations.html# Recomendações
+│   ├── recommendations.html# Recomendações
+│   └── dividends.html      # Dividendos
 ├── static/
 │   ├── style.css           # Estilização (tema B3)
+│   ├── dividends.css       # Estilos customizados para dividendos
 │   └── script.js           # JavaScript
 └── data/
     └── regulador.db        # Banco de dados (criado automaticamente)
@@ -63,6 +66,7 @@ reguladorfinanceiro/
 - **Carteira**: compra e venda de ativos, cálculo automático de preço médio, ganho/perda por ativo e total
 - **Importação em lote**: upload de CSV com múltiplos ativos
 - **Transações**: histórico completo com filtros por tipo e ticker
+- **Dividendos**: histórico completo, próximos pagamentos, calendário visual, gráficos mensais e análise por ativo com filtros avançados
 - **Recomendações**: COMPRA / VENDA / MANUTENÇÃO baseadas em variação, volume e RSI, com score de confiança
 - **Atualização automática**: dados de mercado atualizados a cada 15 minutos via APScheduler
 
@@ -80,6 +84,8 @@ reguladorfinanceiro/
 | POST | `/api/portfolio/buy` | Comprar ativo |
 | POST | `/api/portfolio/sell` | Vender ativo |
 | GET | `/api/portfolio/transactions` | Histórico de transações |
+| GET | `/api/portfolio/dividends` | Dividendos da carteira (resumo) |
+| GET | `/api/dividends/full` | Dividendos completos (histórico + próximos) |
 | POST | `/api/import/csv` | Importação em lote via CSV |
 | GET | `/api/recommendations` | Lista recomendações |
 | GET | `/api/recommendations/<ticker>` | Recomendação de um ativo |
@@ -125,6 +131,30 @@ Veja o arquivo `exemplo_importacao.csv` para referência.
 
 ---
 
+## Aba de Dividendos
+
+### Funcionalidades
+
+- **Resumo Rápido**: Total recebido (12m), média mensal, próximo pagamento, média FIIs
+- **Próximos Pagamentos**: Calendário visual com datas, valores e dias até pagamento
+- **Histórico Pago**: Gráfico de barras mensal + tabela com todos os pagamentos
+- **Por Ativo**: Análise detalhada com DY, total 12m, próximo pagamento
+- **Filtros Avançados**: Por tipo (FII/Ação), período, ticker
+- **Notificações**: Alertas para pagamentos nos próximos 7 dias
+- **Atualização Automática**: A cada 5 minutos
+
+### Personalizações
+
+- Temas de cores adaptativos (claro/escuro)
+- Responsivo para desktop, tablet e mobile
+- Acessibilidade completa (navegação por teclado, alto contraste)
+- Animações suaves e transições
+- Suporte a impressão
+
+Para mais detalhes, veja [DIVIDENDS_GUIDE.md](DIVIDENDS_GUIDE.md)
+
+---
+
 ## Cálculos
 
 **Preço médio**
@@ -146,6 +176,11 @@ score < -5 → VENDA
 demais     → MANUTENÇÃO
 ```
 
+**Dividend Yield (DY)**
+```
+DY = (Dividendo Anual / Preço Atual) × 100
+```
+
 ---
 
 ## Testes
@@ -160,12 +195,13 @@ python test.py
 ## Troubleshooting
 
 | Erro | Solução |
-|------|---------|
+|------|---------| 
 | `ModuleNotFoundError: flask` | Execute `./install.sh` |
 | `Address already in use` | Altere a porta em `app.py` (padrão: 5000) |
 | Banco de dados corrompido | `rm data/regulador.db && ./run.sh` |
 | Preços não atualizam | Verifique a conexão com a internet |
 | Aplicação lenta | Reduza ativos em `market_data.py` |
+| Dividendos não aparecem | Verifique se há ativos na carteira e clique em "Atualizar" |
 
 ---
 
@@ -179,13 +215,15 @@ cp data/regulador.db data/regulador.db.backup
 
 ## Roadmap
 
-- [ ] Gráficos interativos (Chart.js)
-- [ ] Alertas de preço
+- [ ] Gráficos interativos avançados (Chart.js)
+- [ ] Alertas de preço customizáveis
 - [ ] Análise técnica avançada (RSI, MACD, Bollinger Bands)
 - [ ] Autenticação de usuários (JWT)
 - [ ] Exportação de relatórios (PDF)
 - [ ] Integração com corretoras
+- [ ] Simulador de carteira
+- [ ] Backtesting de estratégias
 
 ---
 
-**Versão**: 1.0.0 | **Licença**: MIT
+**Versão**: 1.1.0 | **Licença**: MIT

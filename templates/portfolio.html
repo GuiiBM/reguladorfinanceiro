@@ -26,6 +26,29 @@
       left:50%; transform:translateX(-50%); background:var(--bg-card);
       border:1px solid var(--border); color:var(--text); padding:6px 10px;
       border-radius:6px; font-size:11px; white-space:nowrap; z-index:10; }
+    .months-tip { position:relative; cursor:help; display:inline-block; }
+    .months-pop {
+      display:none; position:absolute; bottom:calc(100% + 8px); left:50%;
+      transform:translateX(-50%); width:216px;
+      background:var(--bg-card); border:1px solid var(--border);
+      border-radius:8px; padding:10px 12px; z-index:100;
+      box-shadow:0 8px 24px rgba(0,0,0,.4);
+    }
+    .months-tip:hover .months-pop { display:block; }
+    .months-pop::after {
+      content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+      border:6px solid transparent; border-top-color:var(--border);
+    }
+    .months-pop::before {
+      content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+      border:5px solid transparent; border-top-color:var(--bg-card); margin-top:-1px; z-index:1;
+    }
+    .months-pop-title { font-size:10px; font-weight:600; color:var(--text-muted);
+      text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px; }
+    .months-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; }
+    .month-chip { padding:3px 0; border-radius:4px; font-size:11px; font-family:var(--mono);
+      text-align:center; background:rgba(63,185,80,.15); color:var(--green); font-weight:600; }
+    .month-chip.empty { background:rgba(255,255,255,.05); color:var(--text-muted); font-weight:400; }
     /* Painel de avisos fixo no rodapé */
     #warningsPanel {
       display:none; position:fixed; bottom:0; left:0; right:0; z-index:100;
@@ -82,6 +105,7 @@
   <a href="/portfolio" class="active">💼 Carteira</a>
   <a href="/transactions">📋 Transações</a>
   <a href="/recommendations">💡 Recomendações</a>
+  <a href="/dividends">💰 Dividendos</a>
   <a href="/settings">⚙️ Tickers</a>
 </nav>
 
@@ -105,6 +129,52 @@
       <div class="stat-label">Rentabilidade</div>
       <div class="stat-value" id="totalPct">—</div>
     </div>
+  </div>
+
+  <!-- DIVIDENDOS -->
+  <div class="card" id="dividendsCard" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <h2 style="margin:0">💰 Projeção de Dividendos</h2>
+      <span class="small text-muted" id="divDisclaimer">Estimativa baseada em histórico — dados com atraso</span>
+    </div>
+    <div class="stats-grid" style="margin-bottom:16px">
+      <div class="stat-card blue">
+        <div class="stat-label">Anual Total</div>
+        <div class="stat-value" id="divAnnual">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Mensal Médio Total</div>
+        <div class="stat-value" id="divMonthly">—</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">FIIs — Mensal Garantido</div>
+        <div class="stat-value" id="divFiiMonthly">—</div>
+        <div class="stat-label" style="font-size:10px;margin-top:2px" id="divFiiAnnual"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Ações — Mensal Médio</div>
+        <div class="stat-value" id="divStockMonthly">—</div>
+        <div class="stat-label" style="font-size:10px;margin-top:2px" id="divStockAnnual"></div>
+      </div>
+    </div>
+    <div id="divDetails" style="display:none">
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:260px">
+          <p class="small" style="font-weight:600;color:var(--green);margin-bottom:8px">🏢 FIIs (mensal)</p>
+          <div id="divFiiList"></div>
+        </div>
+        <div style="flex:1;min-width:260px">
+          <p class="small" style="font-weight:600;color:var(--blue);margin-bottom:8px">📈 Ações (média mensal)</p>
+          <div id="divStockList"></div>
+        </div>
+      </div>
+      <p class="small text-muted" style="margin-top:12px">
+        ⚠️ FIIs tendem a pagar todo mês. Ações pagam de forma irregular — o valor mensal é uma média dos últimos 12 meses.
+        Meses pagos = quantos meses houve pagamento nos últimos 12.
+      </p>
+    </div>
+    <button class="btn btn-ghost btn-sm" style="margin-top:4px" onclick="toggleDivDetails()"
+      id="divToggleBtn">▼ Ver por ativo</button>
   </div>
 
   <!-- OPERAÇÕES -->
@@ -814,7 +884,80 @@ document.getElementById('modal').addEventListener('click', e => {
   if (e.target === document.getElementById('modal')) closeModal();
 });
 
+// ── Dividendos ──────────────────────────────────────────────────────────
+let _divDetailsVisible = false;
+
+function toggleDivDetails() {
+  _divDetailsVisible = !_divDetailsVisible;
+  document.getElementById('divDetails').style.display = _divDetailsVisible ? '' : 'none';
+  document.getElementById('divToggleBtn').textContent = _divDetailsVisible ? '▲ Ocultar' : '▼ Ver por ativo';
+}
+
+function _divRow(d) {
+  const monthly = d.monthly_avg_total != null ? fmt(d.monthly_avg_total) : '—';
+  const annual  = d.annual_total != null ? fmt(d.annual_total) : '—';
+  const count   = d.months_paid || 0;
+  const sigCls  = count >= 10 ? 'green' : count >= 6 ? 'yellow' : 'red';
+  const LABELS  = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+  let badge;
+  if (count > 0 && d.paid_months && d.paid_months.length) {
+    const paidSet = new Set(d.paid_months);
+    const last    = d.paid_months[d.paid_months.length - 1];
+    const [ly, lm] = last.split('-').map(Number);
+    const last12  = [];
+    for (let i = 11; i >= 0; i--) {
+      let m = lm - i, y = ly;
+      if (m <= 0) { m += 12; y--; }
+      last12.push(`${y}-${String(m).padStart(2,'0')}`);
+    }
+    const chips = last12.map(key => {
+      const lbl = LABELS[parseInt(key.split('-')[1]) - 1];
+      return `<span class="month-chip${paidSet.has(key) ? '' : ' empty'}" title="${key}">${lbl}</span>`;
+    }).join('');
+    const rangeLabel = `${last12[0].substring(0,7)} → ${last12[11].substring(0,7)}`;
+    badge = `<span class="months-tip">
+      <span class="signal ${sigCls}">${count}/12 meses</span>
+      <div class="months-pop">
+        <div class="months-pop-title">Últimos 12 meses</div>
+        <div class="months-grid">${chips}</div>
+      </div>
+    </span>`;
+  } else {
+    badge = count > 0
+      ? `<span class="signal ${sigCls}">${count}/12 meses</span>`
+      : '<span class="signal red">sem dados</span>';
+  }
+
+  return `<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap">
+    <span class="mono" style="font-weight:600;min-width:60px">${d.ticker}</span>
+    <span class="small text-muted">${badge}</span>
+    <span class="mono small">${monthly}<span class="text-muted">/mês</span></span>
+    <span class="mono small text-muted">${annual}<span class="text-muted">/ano</span></span>
+  </div>`;
+}
+
+async function loadDividends() {
+  const res = await fetch('/api/portfolio/dividends').then(r => r.json()).catch(() => null);
+  if (!res?.success || !res.data) return;
+  const d = res.data;
+  const card = document.getElementById('dividendsCard');
+  card.style.display = '';
+  document.getElementById('divAnnual').textContent       = fmt(d.total_annual);
+  document.getElementById('divMonthly').textContent      = fmt(d.total_monthly_avg);
+  document.getElementById('divFiiMonthly').textContent   = fmt(d.fii_monthly);
+  document.getElementById('divFiiAnnual').textContent    = `anual: ${fmt(d.fii_annual)}`;
+  document.getElementById('divStockMonthly').textContent = fmt(d.stock_monthly_avg);
+  document.getElementById('divStockAnnual').textContent  = `anual: ${fmt(d.stock_annual)}`;
+
+  const fiis   = d.details.filter(x => x.is_fii);
+  const stocks = d.details.filter(x => !x.is_fii);
+  document.getElementById('divFiiList').innerHTML   = fiis.length   ? fiis.map(_divRow).join('')   : '<p class="small text-muted">Nenhum FII na carteira.</p>';
+  document.getElementById('divStockList').innerHTML = stocks.length ? stocks.map(_divRow).join('') : '<p class="small text-muted">Nenhuma ação na carteira.</p>';
+}
+
 reload();
+loadDividends();
 setInterval(() => { if (currentTab==='simple') reload(); }, 30000);
 </script>
 </body>

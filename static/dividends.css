@@ -1,0 +1,371 @@
+/* ── ESTILOS ADICIONAIS PARA DIVIDENDOS ────────────────────────────────────── */
+
+/* Temas de cores para diferentes tipos de dividendos */
+.dividend-theme-fii {
+  --accent-color: #58a6ff;
+  --accent-dim: rgba(88, 166, 255, 0.15);
+}
+
+.dividend-theme-stock {
+  --accent-color: #3fb950;
+  --accent-dim: rgba(63, 185, 80, 0.15);
+}
+
+/* Cards com animações suaves */
+.summary-card {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Efeito hover nos cards de calendário */
+.calendar-day {
+  position: relative;
+  overflow: hidden;
+}
+
+.calendar-day::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  transition: left 0.5s ease;
+}
+
+.calendar-day:hover::before {
+  left: 100%;
+}
+
+/* Tabelas com zebra striping */
+tbody tr:nth-child(odd) {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+tbody tr:nth-child(even) {
+  background: transparent;
+}
+
+/* Badges com animação de pulso para próximos pagamentos */
+.status-badge.upcoming {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Gráfico com gradiente */
+#monthlyChart {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+/* Tooltip customizado */
+.tooltip {
+  position: relative;
+  display: inline-block;
+  cursor: help;
+  border-bottom: 1px dotted var(--text-muted);
+}
+
+.tooltip .tooltiptext {
+  visibility: hidden;
+  width: 200px;
+  background-color: var(--bg-card);
+  color: var(--text);
+  text-align: center;
+  border-radius: var(--radius);
+  padding: 8px;
+  position: absolute;
+  z-index: 1;
+  bottom: 125%;
+  left: 50%;
+  margin-left: -100px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.tooltip .tooltiptext::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: var(--bg-card) transparent transparent transparent;
+}
+
+.tooltip:hover .tooltiptext {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* Filtros com estilo melhorado */
+.controls-bar {
+  background: var(--bg-hover);
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-light);
+}
+
+.controls-bar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  transition: background var(--transition);
+}
+
+.controls-bar label:hover {
+  background: var(--bg);
+}
+
+/* Indicadores de status com ícones */
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.status-indicator.paid::before {
+  content: '✓';
+  color: var(--green);
+}
+
+.status-indicator.upcoming::before {
+  content: '⏱';
+  color: var(--yellow);
+}
+
+.status-indicator.overdue::before {
+  content: '!';
+  color: var(--red);
+}
+
+/* Valores com formatação especial */
+.value-large {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: var(--mono);
+}
+
+.value-small {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Linhas de separação customizadas */
+.divider-custom {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border), transparent);
+  margin: 16px 0;
+}
+
+/* Efeito de carregamento */
+.skeleton {
+  background: linear-gradient(90deg, var(--bg) 25%, var(--bg-hover) 50%, var(--bg) 75%);
+  background-size: 200% 100%;
+  animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Cards expandíveis */
+.expandable-card {
+  transition: all var(--transition);
+}
+
+.expandable-card.expanded {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* Badges com cores dinâmicas */
+.badge-dynamic {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  transition: all var(--transition);
+}
+
+.badge-dynamic:hover {
+  transform: scale(1.05);
+}
+
+/* Tabelas responsivas com scroll horizontal */
+.table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-responsive::-webkit-scrollbar {
+  height: 4px;
+}
+
+.table-responsive::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+.table-responsive::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.table-responsive::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
+/* Animação de entrada para elementos */
+.fade-in-up {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Estilos para impressão */
+@media print {
+  nav, header, .div-refresh, .controls-bar {
+    display: none;
+  }
+
+  .container {
+    max-width: 100%;
+    padding: 0;
+  }
+
+  .card {
+    page-break-inside: avoid;
+    border: 1px solid #ccc;
+  }
+
+  table {
+    width: 100%;
+  }
+
+  th, td {
+    border: 1px solid #ccc;
+  }
+}
+
+/* Modo escuro (já aplicado por padrão) */
+@media (prefers-color-scheme: dark) {
+  .summary-card {
+    background: var(--bg);
+    border-color: var(--border);
+  }
+
+  .calendar-day {
+    background: var(--bg);
+    border-color: var(--border);
+  }
+}
+
+/* Modo claro (opcional) */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --bg-card: #f6f8fa;
+    --bg-hover: #eaeef2;
+    --border: #d0d7de;
+    --text: #24292f;
+    --text-muted: #57606a;
+  }
+}
+
+/* Animações para transições suaves */
+* {
+  transition: background-color var(--transition), border-color var(--transition), color var(--transition);
+}
+
+/* Desabilitar transições em elementos específicos */
+.no-transition {
+  transition: none !important;
+}
+
+/* Estilos para acessibilidade */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Focus visível para navegação por teclado */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* Estilos para modo de alto contraste */
+@media (prefers-contrast: more) {
+  .summary-card {
+    border-width: 2px;
+  }
+
+  .badge-dynamic {
+    border: 1px solid currentColor;
+  }
+
+  table {
+    border: 2px solid var(--border);
+  }
+}
+
+/* Estilos para redução de movimento */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

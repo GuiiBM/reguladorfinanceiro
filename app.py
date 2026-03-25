@@ -15,7 +15,7 @@ from market_data import (
 )
 from portfolio import buy_asset, sell_asset, get_portfolio_performance, import_csv
 from recommendations import update_all_recommendations, get_top_recommendations, get_market_opportunities, get_portfolio_health
-from fundamentals import enrich_portfolio, clear_cache
+from fundamentals import enrich_portfolio, clear_cache, portfolio_dividends, fetch_dividends_full
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
@@ -68,9 +68,14 @@ def transactions():
 def recommendations():
     return render_template('recommendations.html')
 
+@app.route('/dividends')
+def dividends():
+    return render_template('dividends.html')
+
 @app.route('/settings')
 def settings():
     return render_template('settings.html')
+
 
 # ==================== API - MERCADO ====================
 
@@ -233,6 +238,27 @@ def api_portfolio_stream():
         mimetype='text/event-stream',
         headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'}
     )
+
+@app.route('/api/portfolio/dividends', methods=['GET'])
+def api_portfolio_dividends():
+    try:
+        portfolio_data = get_portfolio(user_id)
+        result = portfolio_dividends(portfolio_data)
+        return jsonify({'success': True, 'data': result})
+    except Exception as e:
+        logger.error(f'Erro em /api/portfolio/dividends: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/api/dividends/full', methods=['GET'])
+def api_dividends_full():
+    try:
+        portfolio_data = get_portfolio(user_id)
+        result = fetch_dividends_full(portfolio_data)
+        return jsonify({'success': True, 'data': result})
+    except Exception as e:
+        logger.error(f'Erro em /api/dividends/full: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 
 @app.route('/api/portfolio/buy', methods=['POST'])
 def api_portfolio_buy():
