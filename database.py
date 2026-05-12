@@ -221,21 +221,24 @@ def update_portfolio(user_id, ticker, quantity, average_price):
     if existing:
         old_qty, old_price = existing
         new_qty = old_qty + quantity
-        
-        if new_qty > 0:
-            new_avg_price = ((old_qty * old_price) + (quantity * average_price)) / new_qty
+
+        if new_qty <= 0:
+            cursor.execute(
+                'DELETE FROM portfolio WHERE user_id = ? AND ticker = ?',
+                (user_id, ticker)
+            )
+        else:
+            # PM só muda em compras (quantity > 0); vendas apenas reduzem a quantidade
+            if quantity > 0:
+                new_avg_price = ((old_qty * old_price) + (quantity * average_price)) / new_qty
+            else:
+                new_avg_price = old_price
             total_value = new_qty * new_avg_price
-            
             cursor.execute('''
-                UPDATE portfolio 
+                UPDATE portfolio
                 SET quantity = ?, average_price = ?, total_value = ?
                 WHERE user_id = ? AND ticker = ?
             ''', (new_qty, new_avg_price, total_value, user_id, ticker))
-        else:
-            cursor.execute('''
-                DELETE FROM portfolio 
-                WHERE user_id = ? AND ticker = ?
-            ''', (user_id, ticker))
     else:
         if quantity > 0:
             total_value = quantity * average_price
@@ -336,19 +339,6 @@ def delete_portfolio_position(user_id, ticker):
     conn.commit()
     conn.close()
 
-
-    """Salva uma recomendação"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        INSERT OR REPLACE INTO recommendations 
-        (ticker, recommendation, confidence_score, reason, created_at)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (ticker, recommendation, confidence_score, reason, datetime.now()))
-    
-    conn.commit()
-    conn.close()
 
 def save_recommendation(ticker, recommendation, confidence_score, reason):
     conn = sqlite3.connect(DB_PATH)

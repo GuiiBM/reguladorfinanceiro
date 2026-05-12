@@ -313,7 +313,8 @@ def fetch_dividends_detail(ticker):
         monthly_data = f_monthly.result()
         yearly_data  = f_yearly.result()
 
-    now = datetime.now()
+    now   = datetime.now()
+    today = now.date()
 
     monthly_payments = {}
     if monthly_data:
@@ -321,7 +322,8 @@ def fetch_dividends_detail(ticker):
             for item in monthly_data.get('assetEarningsModels', []):
                 try:
                     dt = datetime.strptime(item['pd'], '%d/%m/%Y')
-                    if (now - dt).days <= 365:
+                    # Apenas pagamentos já realizados (não futuros) dentro dos últimos 365 dias
+                    if dt.date() <= today and (now - dt).days <= 365:
                         key = dt.strftime('%Y-%m')
                         monthly_payments[key] = monthly_payments.get(key, 0) + float(item['v'])
                 except Exception:
@@ -343,15 +345,20 @@ def fetch_dividends_detail(ticker):
         except Exception:
             pass
 
-    months_paid = len(monthly_payments)
-    monthly_avg = round(sum(monthly_payments.values()) / 12, 4) if monthly_payments else None
+    months_paid  = len(monthly_payments)
+    total_paid   = sum(monthly_payments.values())
+    # Média mensal = total dos últimos 12 meses / 12 (janela fixa, igual para FIIs e ações)
+    monthly_avg  = round(total_paid / 12, 4) if monthly_payments else None
+    # Anual estimado: usa histórico real se disponível, senão API externa
+    annual_from_history = round(total_paid, 4) if monthly_payments else None
 
     result = {
-        'is_fii':           is_fii,
-        'annual_estimated': annual_estimated,
-        'monthly_avg':      monthly_avg,
-        'months_paid':      months_paid,
-        'monthly_payments': monthly_payments,
+        'is_fii':              is_fii,
+        'annual_estimated':    annual_estimated,
+        'annual_from_history': annual_from_history,
+        'monthly_avg':         monthly_avg,
+        'months_paid':         months_paid,
+        'monthly_payments':    monthly_payments,
     }
     _div_cache[ticker_base] = {'data': result, 'ts': datetime.now().isoformat()}
     return result
@@ -374,7 +381,7 @@ def portfolio_dividends(portfolio):
             except Exception:
                 continue
             qty = pos['quantity']
-            annual  = (d['annual_estimated'] or 0) * qty
+            annual  = (d['annual_from_history'] or d['annual_estimated'] or 0) * qty
             monthly = (d['monthly_avg'] or 0) * qty
             if d['is_fii']:
                 fii_annual  += annual
@@ -386,12 +393,12 @@ def portfolio_dividends(portfolio):
                 'ticker':                pos['ticker'].replace('.SA', ''),
                 'is_fii':               d['is_fii'],
                 'quantity':             qty,
-                'annual_per_share':     d['annual_estimated'],
-                'monthly_avg_per_share': d['monthly_avg'],
-                'annual_total':         round(annual, 2),
-                'monthly_avg_total':    round(monthly, 2),
-                'months_paid':          d['months_paid'],
-                'paid_months':           sorted(d['monthly_payments'].keys()),
+                'annual_per_share':      d['annual_from_history'] or d['annual_estimated'],
+                'monthly_avg_per_share':  d['monthly_avg'],
+                'annual_total':           round(annual, 2),
+                'monthly_avg_total':      round(monthly, 2),
+                'months_paid':            d['months_paid'],
+                'paid_months':            sorted(d['monthly_payments'].keys()),
             })
 
     return {
@@ -486,9 +493,9 @@ def _build_qty_history(transactions, ticker):
     qty = 0.0
     for t in events:
         if t['type'] == 'compra':
-            qty += t['quantity']
+            qty += abs(t['quantity'])
         else:
-            qty -= t['quantity']
+            qty -= abs(t['quantity'])
         history.append((t['date'][:10], max(qty, 0.0)))
     return history
 

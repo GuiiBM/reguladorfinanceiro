@@ -48,7 +48,7 @@ def sell_asset(user_id, ticker, quantity, price, date=None):
         profit_loss_percent = ((price - cost_price) / cost_price * 100) if cost_price != 0 else 0
         total_value = quantity * price
         
-        add_transaction(user_id, ticker, 'venda', -quantity, price, profit_loss, date=date)
+        add_transaction(user_id, ticker, 'venda', quantity, price, profit_loss, date=date)
         update_portfolio(user_id, ticker, -quantity, cost_price)
         
         logger.info(f"Venda registrada: {ticker} x{quantity} @ R${price} | Ganho/Perda: R${profit_loss}")

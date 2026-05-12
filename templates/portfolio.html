@@ -274,6 +274,7 @@
       <button class="tab-btn active" id="tabSimple" onclick="switchTab('simple')">Resumo</button>
       <button class="tab-btn" id="tabDetailed" onclick="switchTab('detailed')">Análise Completa</button>
       <button class="tab-btn" id="tabAllocate" onclick="switchTab('allocate')">Aportar</button>
+      <button class="btn btn-ghost btn-sm" style="color:var(--blue);border-color:rgba(88,166,255,.3)" onclick="openNextBuy()">🎯 Próxima Compra</button>
       <button class="btn btn-ghost btn-sm" onclick="reload()">↻ Atualizar</button>
     </div>
   </div>
@@ -341,6 +342,20 @@
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="savePosition()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- MODAL PRÓXIMA COMPRA -->
+<div id="nextBuyModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:300;align-items:flex-start;justify-content:center;overflow-y:auto;padding:24px 16px">
+  <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:560px;margin:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)">
+      <h2 style="font-size:14px;margin:0">🎯 Próxima Compra Sugerida</h2>
+      <button onclick="closeNextBuy()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;line-height:1">✕</button>
+    </div>
+    <div id="nextBuyBody" style="padding:20px">
+      <div class="loading-overlay"><div class="spinner"></div> Analisando carteira…</div>
     </div>
   </div>
 </div>
@@ -957,6 +972,92 @@ async function loadDividends() {
   document.getElementById('divFiiList').innerHTML   = fiis.length   ? fiis.map(_divRow).join('')   : '<p class="small text-muted">Nenhum FII na carteira.</p>';
   document.getElementById('divStockList').innerHTML = stocks.length ? stocks.map(_divRow).join('') : '<p class="small text-muted">Nenhuma ação na carteira.</p>';
 }
+
+
+// ── Próxima Compra ───────────────────────────────────────────────────────
+async function openNextBuy() {
+  document.getElementById('nextBuyModal').style.display = 'flex';
+  document.getElementById('nextBuyBody').innerHTML =
+    '<div class="loading-overlay"><div class="spinner"></div> Analisando carteira…</div>';
+
+  const res = await fetch('/api/portfolio/next-buy').then(r => r.json()).catch(() => null);
+  if (!res?.success) {
+    document.getElementById('nextBuyBody').innerHTML =
+      '<div class="alert alert-danger">' + (res?.message || 'Erro ao analisar') + '</div>';
+    return;
+  }
+
+  const { suggestion, alternatives } = res.data;
+
+  if (!suggestion) {
+    document.getElementById('nextBuyBody').innerHTML =
+      '<div class="empty"><div class="empty-icon">🤔</div>Nenhuma sugestão disponível no momento.</div>';
+    return;
+  }
+
+  const qtyRows = suggestion.qty_steps.map(s =>
+    `<tr>
+      <td class="mono" style="font-size:18px;font-weight:800;color:var(--green);padding:6px 12px">${s.qty}</td>
+      <td class="mono" style="padding:6px 12px">${fmt(s.cost)}</td>
+      <td style="padding:6px 12px;font-size:11px;color:var(--text-muted)">${s.label}</td>
+    </tr>`
+  ).join('');
+
+  const altRows = alternatives.map(a =>
+    `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
+      <span class="mono" style="font-weight:700;color:var(--blue);min-width:60px">${a.ticker}</span>
+      <span class="small text-muted" style="flex:1">${a.reason}</span>
+      <span class="mono small">${a.dy != null ? a.dy.toFixed(2)+'% DY' : '—'}</span>
+      <span class="signal ${a.signal_cls}">${a.signal}</span>
+    </div>`
+  ).join('');
+
+  document.getElementById('nextBuyBody').innerHTML = `
+    <div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-size:24px;font-family:var(--mono);font-weight:800;color:var(--text)">${suggestion.ticker}</div>
+          <div style="font-size:12px;color:var(--text-muted)">${suggestion.name}</div>
+        </div>
+        <div style="margin-left:auto;text-align:right">
+          <div style="font-size:20px;font-family:var(--mono);font-weight:700">${fmt(suggestion.price)}</div>
+          ${suggestion.dy != null ? `<div style="font-size:11px;color:var(--green)">${suggestion.dy.toFixed(2)}% DY</div>` : ''}
+        </div>
+      </div>
+      <div class="notice info" style="margin-bottom:12px">
+        <span class="notice-icon">💡</span>
+        <span>${suggestion.main_reason}</span>
+      </div>
+    </div>
+
+    <h3 style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Sugestões de Quantidade</h3>
+    <div style="overflow-x:auto;margin-bottom:16px">
+      <table style="width:100%">
+        <thead><tr>
+          <th style="padding:6px 12px;font-size:10px;color:var(--text-muted);text-align:left">Cotas</th>
+          <th style="padding:6px 12px;font-size:10px;color:var(--text-muted);text-align:left">Custo Total</th>
+          <th style="padding:6px 12px;font-size:10px;color:var(--text-muted);text-align:left">Contexto</th>
+        </tr></thead>
+        <tbody>${qtyRows}</tbody>
+      </table>
+    </div>
+
+    ${alternatives.length ? `
+    <h3 style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Alternativas</h3>
+    <div>${altRows}</div>` : ''}
+
+    <p class="small text-muted" style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border-light)">
+      ⚠️ Sugestão baseada em % da carteira e sinal técnico. Não é recomendação de investimento.
+    </p>`;
+}
+
+function closeNextBuy() {
+  document.getElementById('nextBuyModal').style.display = 'none';
+}
+document.getElementById('nextBuyModal').addEventListener('click', e => {
+  if (e.target === document.getElementById('nextBuyModal')) closeNextBuy();
+});
+
 
 reload();
 loadDividends();

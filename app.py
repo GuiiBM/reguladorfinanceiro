@@ -133,24 +133,18 @@ def api_tickers_add():
         name = body.get('name', '').strip()
         if not ticker:
             return jsonify({'success': False, 'message': 'Ticker obrigatório'}), 400
-
         asset_data = fetch_any_asset(ticker)
         if not asset_data:
             return jsonify({'success': False, 'message': f'{ticker} não encontrado na B3'}), 404
-
         assets = load_tickers()
         if any(a['ticker'] == ticker for a in assets):
             return jsonify({'success': False, 'message': f'{ticker} já está na lista'}), 409
-
         asset_type = 'FII' if '11' in ticker else 'Ação'
         assets.append({'ticker': ticker, 'name': name or asset_data['name'], 'type': asset_type})
         save_tickers(assets)
-
-        update_asset(
-            asset_data['ticker'], asset_data['name'], asset_data['type'],
-            asset_data['current_price'], asset_data['variation_percent'],
-            asset_data['variation_value'], asset_data['market_cap'], asset_data['volume']
-        )
+        update_asset(asset_data['ticker'], asset_data['name'], asset_data['type'],
+                     asset_data['current_price'], asset_data['variation_percent'],
+                     asset_data['variation_value'], asset_data['market_cap'], asset_data['volume'])
         return jsonify({'success': True, 'message': f'{ticker} adicionado', 'data': asset_data})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -190,7 +184,6 @@ def api_portfolio():
 
 @app.route('/api/portfolio/detailed', methods=['GET'])
 def api_portfolio_detailed():
-    """Carteira enriquecida com fundamentais. Usa cache — não limpa a cada chamada."""
     try:
         portfolio_data = get_portfolio(user_id)
         performance    = get_portfolio_performance(user_id)
@@ -201,43 +194,31 @@ def api_portfolio_detailed():
         logger.error(f'Erro em /api/portfolio/detailed: {e}')
         return jsonify({'success': False, 'message': str(e)}), 500
 
-
 @app.route('/api/portfolio/stream', methods=['GET'])
 def api_portfolio_stream():
-    """SSE: envia cada ativo da carteira conforme fica pronto."""
-    from fundamentals import _enrich_one, _cache_get
+    from fundamentals import _enrich_one
     from concurrent.futures import ThreadPoolExecutor, as_completed
-
     def generate():
         portfolio_data = get_portfolio(user_id)
         performance    = get_portfolio_performance(user_id)
         total_val      = performance.get('total_current_value', 0) or 1
-
-        # Envia performance imediatamente
         yield f"data: {json.dumps({'type': 'performance', 'data': performance})}\n\n"
         yield f"data: {json.dumps({'type': 'total', 'count': len(portfolio_data)})}\n\n"
-
         if not portfolio_data:
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
-
         with ThreadPoolExecutor(max_workers=5) as ex:
             futures = {ex.submit(_enrich_one, pos, total_val): pos for pos in portfolio_data}
             for future in as_completed(futures):
                 try:
                     enriched = future.result()
                 except Exception as e:
-                    enriched = futures[future]  # fallback sem fundamentais
+                    enriched = futures[future]
                     logger.error(f'Stream error: {e}')
                 yield f"data: {json.dumps({'type': 'asset', 'data': enriched})}\n\n"
-
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'}
-    )
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 @app.route('/api/portfolio/dividends', methods=['GET'])
 def api_portfolio_dividends():
@@ -259,7 +240,6 @@ def api_dividends_full():
         logger.error(f'Erro em /api/dividends/full: {e}')
         return jsonify({'success': False, 'message': str(e)}), 500
 
-
 @app.route('/api/portfolio/buy', methods=['POST'])
 def api_portfolio_buy():
     try:
@@ -268,19 +248,14 @@ def api_portfolio_buy():
         quantity = float(data.get('quantity', 0))
         price = float(data.get('price', 0))
         date = data.get('date') or None
-
         if not ticker or quantity <= 0 or price <= 0:
             return jsonify({'success': False, 'message': 'Dados inválidos'}), 400
-
         if not get_asset(ticker):
             asset_data = fetch_any_asset(ticker)
             if asset_data:
-                update_asset(
-                    asset_data['ticker'], asset_data['name'], asset_data['type'],
-                    asset_data['current_price'], asset_data['variation_percent'],
-                    asset_data['variation_value'], asset_data['market_cap'], asset_data['volume']
-                )
-
+                update_asset(asset_data['ticker'], asset_data['name'], asset_data['type'],
+                             asset_data['current_price'], asset_data['variation_percent'],
+                             asset_data['variation_value'], asset_data['market_cap'], asset_data['volume'])
         result = buy_asset(user_id, ticker, quantity, price, date)
         return jsonify(result) if result['success'] else (jsonify(result), 400)
     except Exception as e:
@@ -294,10 +269,8 @@ def api_portfolio_sell():
         quantity = float(data.get('quantity', 0))
         price = float(data.get('price', 0))
         date = data.get('date') or None
-
         if not ticker or quantity <= 0 or price <= 0:
             return jsonify({'success': False, 'message': 'Dados inválidos'}), 400
-
         result = sell_asset(user_id, ticker, quantity, price, date)
         return jsonify(result) if result['success'] else (jsonify(result), 400)
     except Exception as e:
@@ -316,12 +289,8 @@ def api_transaction_update(tid):
     try:
         data = request.get_json()
         from database import update_transaction
-        update_transaction(tid, user_id,
-            data.get('ticker','').upper(),
-            data.get('type',''),
-            float(data.get('quantity',0)),
-            float(data.get('price',0)),
-            data.get('date') or None)
+        update_transaction(tid, user_id, data.get('ticker','').upper(), data.get('type',''),
+                           float(data.get('quantity',0)), float(data.get('price',0)), data.get('date') or None)
         return jsonify({'success': True, 'message': 'Transação atualizada'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -341,8 +310,7 @@ def api_portfolio_update(ticker):
         data = request.get_json()
         from database import set_portfolio_position
         set_portfolio_position(user_id, ticker.upper(),
-            float(data.get('quantity', 0)),
-            float(data.get('average_price', 0)))
+                               float(data.get('quantity', 0)), float(data.get('average_price', 0)))
         return jsonify({'success': True, 'message': 'Posição atualizada'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -384,13 +352,11 @@ def api_recommendations():
 
 @app.route('/api/recommendations/full', methods=['GET'])
 def api_recommendations_full():
-    """Recomendações enriquecidas: dados técnicos em tempo real + contexto da carteira."""
     try:
         from recommendations import calculate_recommendation
-        assets     = get_all_assets()
-        portfolio  = get_portfolio(user_id)
-        port_map   = {p['ticker']: p for p in portfolio}
-
+        assets    = get_all_assets()
+        portfolio = get_portfolio(user_id)
+        port_map  = {p['ticker']: p for p in portfolio}
         result = []
         for asset in assets:
             if not asset.get('current_price') or asset['current_price'] <= 0:
@@ -399,43 +365,25 @@ def api_recommendations_full():
             if not rec:
                 continue
             pos = port_map.get(asset['ticker'])
-            in_portfolio = pos is not None
-            profit_pct   = None
+            profit_pct = None
             if pos:
                 avg = pos['average_price']
                 cur = asset.get('current_price') or avg
                 profit_pct = round((cur - avg) / avg * 100, 2) if avg else None
-
             result.append({
-                'ticker':        asset['ticker'].replace('.SA', ''),
-                'name':          asset.get('name', ''),
-                'type':          asset.get('type', ''),
-                'price':         asset.get('current_price'),
+                'ticker': asset['ticker'].replace('.SA', ''), 'name': asset.get('name', ''),
+                'type': asset.get('type', ''), 'price': asset.get('current_price'),
                 'variation_pct': asset.get('variation_percent'),
-                'recommendation': rec['recommendation'],
-                'confidence':    rec['confidence_score'],
-                'score':         rec['score'],
-                'reason':        rec['reason'],
-                'rsi':           rec['rsi'],
-                'variation_7d':  rec['variation_7d'],
-                'variation_30d': rec['variation_30d'],
-                'volume_trend':  rec['volume_trend'],
-                'sma20':         rec.get('sma20'),
-                'sma50':         rec.get('sma50'),
-                'sma200':        rec.get('sma200'),
-                'macd':          rec.get('macd'),
-                'macd_signal':   rec.get('macd_signal'),
-                'bb_upper':      rec.get('bb_upper'),
-                'bb_lower':      rec.get('bb_lower'),
-                'in_portfolio':  in_portfolio,
-                'profit_pct':    profit_pct,
+                'recommendation': rec['recommendation'], 'confidence': rec['confidence_score'],
+                'score': rec['score'], 'reason': rec['reason'], 'rsi': rec['rsi'],
+                'variation_7d': rec['variation_7d'], 'variation_30d': rec['variation_30d'],
+                'volume_trend': rec['volume_trend'], 'sma20': rec.get('sma20'),
+                'sma50': rec.get('sma50'), 'sma200': rec.get('sma200'),
+                'macd': rec.get('macd'), 'macd_signal': rec.get('macd_signal'),
+                'bb_upper': rec.get('bb_upper'), 'bb_lower': rec.get('bb_lower'),
+                'in_portfolio': pos is not None, 'profit_pct': profit_pct,
             })
-
-        result.sort(key=lambda x: (
-            0 if x['recommendation'] == 'COMPRA' else
-            1 if x['recommendation'] == 'MANUTENÇÃO' else 2,
-            -x['confidence']
-        ))
+        result.sort(key=lambda x: (0 if x['recommendation']=='COMPRA' else 1 if x['recommendation']=='MANUTENÇÃO' else 2, -x['confidence']))
         return jsonify({'success': True, 'data': result})
     except Exception as e:
         logger.error(f'Erro em /api/recommendations/full: {e}')
@@ -451,8 +399,6 @@ def api_recommendation_detail(ticker):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-# ==================== API - ANÁLISE ====================
-
 @app.route('/api/analysis/<ticker>', methods=['GET'])
 def api_analysis(ticker):
     try:
@@ -464,7 +410,124 @@ def api_analysis(ticker):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+def fmt_price(v):
+    return f'R$ {v:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+
+
 # ==================== API - APORTE ====================
+
+@app.route('/api/portfolio/next-buy', methods=['GET'])
+def api_next_buy():
+    """Sugere o próximo ativo. Usa apenas DB local — zero chamadas externas."""
+    try:
+        portfolio_data = get_portfolio(user_id)
+        if not portfolio_data:
+            return jsonify({'success': False, 'message': 'Carteira vazia'}), 400
+
+        performance = get_portfolio_performance(user_id)
+        total_val   = performance.get('total_current_value', 0) or 1
+
+        # Recomendações já calculadas no DB (sem recalcular)
+        recs_list = get_recommendations() or []
+        recs_map  = {r['ticker']: r for r in recs_list}
+
+        scored = []
+        for pos in portfolio_data:
+            asset = get_asset(pos['ticker']) or {}
+            price = asset.get('current_price') or pos['average_price']
+            if not price or price <= 0:
+                continue
+
+            pct_port = round((pos['quantity'] * price) / total_val * 100, 2)
+
+            rec = recs_map.get(pos['ticker']) or recs_map.get(pos['ticker'].replace('.SA',''))
+            sig_action = ''
+            sig_reason = ''
+            if rec:
+                action = rec.get('recommendation', '')
+                sig_action = 'COMPRAR' if action == 'COMPRA' else ('VENDER' if action == 'VENDA' else 'MANTER')
+                sig_reason = rec.get('reason', '')
+                sig_cls    = 'green' if action == 'COMPRA' else ('red' if action == 'VENDA' else 'yellow')
+            else:
+                sig_cls = 'yellow'
+
+            sig_bonus = 2 if sig_action == 'COMPRAR' else (1 if sig_action == 'MANTER' else 0)
+            # Score simples: prioriza menor % na carteira (mais subrepresentado) + sinal
+            score = (100 - pct_port) * 0.7 + sig_bonus * 0.3
+
+            scored.append((score, {
+                'ticker':      pos['ticker'],
+                'name':        pos.get('name', pos['ticker'].replace('.SA','')),
+                'current_price': price,
+                'pct_portfolio': pct_port,
+                'dy':          asset.get('dy'),
+                'buy_signal':  {'action': sig_action, 'cls': sig_cls, 'reason': sig_reason} if rec else None,
+            }))
+
+        if not scored:
+            return jsonify({'success': False, 'message': 'Sem dados suficientes'}), 400
+
+        scored.sort(key=lambda x: -x[0])
+        _, best = scored[0]
+        price  = best['current_price']
+        ticker = best['ticker'].replace('.SA', '')
+
+        # Sugestões de quantidade progressivas
+        second_price = scored[1][1]['current_price'] if len(scored) > 1 else None
+        qty_steps, qty = [], 1
+        while True:
+            cost = round(qty * price, 2)
+            if qty == 1:
+                label = 'Mínimo — 1 cota'
+            elif second_price and cost >= second_price * 2:
+                label = f'Limite — com esse valor já cabem {int(cost//second_price)} cotas de {scored[1][1]["ticker"].replace(".SA","")}'
+                qty_steps.append({'qty': qty, 'cost': cost, 'label': label})
+                break
+            elif qty <= 5:
+                label = f'{qty} cotas — entrada gradual'
+            elif qty <= 20:
+                label = f'{qty} cotas — posição moderada'
+            else:
+                label = f'{qty} cotas — posição relevante'
+            qty_steps.append({'qty': qty, 'cost': cost, 'label': label})
+            if len(qty_steps) >= 6:
+                break
+            qty = qty + 1 if qty < 5 else qty * 2
+
+        # Alternativas
+        alternatives = []
+        for _, a in scored[1:4]:
+            sig = (a.get('buy_signal') or {}).get('action', '—')
+            alternatives.append({
+                'ticker':     a['ticker'].replace('.SA',''),
+                'price':      a['current_price'],
+                'dy':         a.get('dy'),
+                'signal':     sig,
+                'signal_cls': (a.get('buy_signal') or {}).get('cls', 'yellow'),
+                'reason':     (a.get('buy_signal') or {}).get('reason','') or f"{a.get('pct_portfolio',0):.1f}% da carteira",
+            })
+
+        parts = [f"{best['pct_portfolio']:.1f}% da carteira — mais subrepresentado"]
+        if best.get('dy'):
+            parts.append(f"DY de {best['dy']:.2f}%")
+        if (best.get('buy_signal') or {}).get('action') == 'COMPRAR':
+            parts.append('sinal técnico de compra')
+
+        return jsonify({'success': True, 'data': {
+            'suggestion': {
+                'ticker':      ticker,
+                'name':        best.get('name', ticker),
+                'price':       price,
+                'dy':          best.get('dy'),
+                'qty_steps':   qty_steps,
+                'main_reason': ', '.join(parts),
+            },
+            'alternatives': alternatives,
+            'strategy':     None,
+        }})
+    except Exception as e:
+        logger.error(f'Erro em /api/portfolio/next-buy: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/portfolio/allocate', methods=['GET'])
 def api_portfolio_allocate():
