@@ -1,12 +1,17 @@
 # Configuração da Aplicação Regulador Financeiro
+import os
 
 # ==================== SERVIDOR ====================
 FLASK_HOST = '0.0.0.0'
 FLASK_PORT = 5000
-FLASK_DEBUG = True
+# Nunca deixe True em produção: com host 0.0.0.0 o debugger do Werkzeug fica
+# acessível pela rede, permitindo execução remota de código.
+FLASK_DEBUG = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
 
 # ==================== BANCO DE DADOS ====================
-DATABASE_PATH = 'data/regulador.db'
+# Caminho absoluto: evita criar um banco vazio quando o processo é iniciado
+# a partir de um diretório de trabalho diferente (cron, systemd, etc.).
+DATABASE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'regulador.db')
 
 # ==================== ATUALIZAÇÃO DE DADOS ====================
 # Intervalo de atualização em minutos
@@ -55,7 +60,9 @@ LOG_FILE = 'logs/regulador.log'
 # ==================== SEGURANÇA ====================
 # Nota: Adicionar autenticação em produção
 ENABLE_AUTH = False
-SECRET_KEY = 'sua-chave-secreta-aqui'
+# Defina a variável de ambiente SECRET_KEY em produção; o valor abaixo é só
+# para desenvolvimento local.
+SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-only-change-me')
 
 # ==================== CACHE ====================
 # Tempo de cache em segundos

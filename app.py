@@ -1,32 +1,72 @@
+import os
+import atexit
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
 import logging
 import json
+from threading import Thread
 
+import config
 from database import (
     init_db, get_user_or_create, get_all_assets, get_asset,
     search_assets, get_portfolio, get_transactions, get_recommendations,
-    get_recommendation, get_price_history, update_asset
+    get_recommendation, get_price_history, update_asset,
+    update_transaction, delete_transaction, set_portfolio_position, delete_portfolio_position
 )
 from market_data import (
     update_all_assets, get_asset_analysis, initialize_market_data,
-    fetch_any_asset, load_tickers, save_tickers
+    fetch_any_asset, load_tickers, save_tickers, is_fii
 )
 from portfolio import buy_asset, sell_asset, get_portfolio_performance, import_csv
-from recommendations import update_all_recommendations, get_top_recommendations, get_market_opportunities, get_portfolio_health
+from recommendations import (
+    update_all_recommendations, get_top_recommendations, get_market_opportunities,
+    get_portfolio_health, calculate_recommendation
+)
 from fundamentals import enrich_portfolio, clear_cache, portfolio_dividends, fetch_dividends_full
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.secret_key = config.SECRET_KEY
+app.config['MAX_CONTENT_LENGTH'] = config.MAX_FILE_SIZE_MB * 1024 * 1024
+# Precisa ser setado antes do bloco de inicialização abaixo (que checa
+# app.debug) — só é lido de novo, não redefinido, no app.run() no final do arquivo.
+app.debug = config.FLASK_DEBUG
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _to_float(value):
+    """Converte para float com segurança; retorna None em vez de deixar o
+    ValueError virar um 500 genérico nas rotas da API."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+# Inicializa o banco de dados estrutural
 init_db()
 user_id = get_user_or_create('default_user')
 
+
+def startup_data_load():
+    """Lê o tickers.json, puxa dados da API externa e calcula os indicadores técnicos.
+    Só faz a carga pesada (initialize_market_data) se o banco ainda estiver vazio —
+    evita repetir o fetch completo a cada reinício do servidor."""
+    try:
+        if not get_all_assets():
+            logger.info("⚡ [Startup] Primeira execução — carregando ativos do tickers.json...")
+            initialize_market_data()
+        logger.info("⚡ [Startup] Calculando a matriz de recomendações técnicas (RSI, MACD, BB)...")
+        update_all_recommendations()
+        logger.info("✅ [Startup] Carga inicial de mercado e análises concluída com sucesso!")
+    except Exception as e:
+        logger.error(f"❌ [Startup] Falha crítica na carga síncrona inicial: {e}")
+
+
 scheduler = BackgroundScheduler()
+
 
 def scheduled_update():
     try:
@@ -35,16 +75,17 @@ def scheduled_update():
     except Exception as e:
         logger.error(f"Erro na atualização agendada: {e}")
 
-scheduler.add_job(scheduled_update, 'interval', minutes=15)
-scheduler.start()
 
-try:
-    if not get_all_assets():
-        logger.info("Primeira execução - inicializando dados de mercado...")
-        initialize_market_data()
-        update_all_recommendations()
-except Exception as e:
-    logger.error(f"Erro na inicialização: {e}")
+# Com debug=True, o reloader do Werkzeug reimporta este módulo em dois
+# processos (monitor + worker); sem essa checagem a thread de startup e o
+# scheduler eram iniciados em dobro, duplicando chamadas às APIs externas e
+# gravações concorrentes no SQLite. WERKZEUG_RUN_MAIN só existe no processo
+# worker real, então isso garante uma única inicialização em qualquer modo.
+if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+    Thread(target=startup_data_load, daemon=True).start()
+    scheduler.add_job(scheduled_update, 'interval', minutes=config.UPDATE_INTERVAL_MINUTES)
+    scheduler.start()
+    atexit.register(lambda: scheduler.shutdown(wait=False))
 
 # ==================== ROTAS HTML ====================
 
@@ -128,7 +169,7 @@ def api_tickers_get():
 @app.route('/api/tickers', methods=['POST'])
 def api_tickers_add():
     try:
-        body = request.get_json()
+        body = request.get_json(silent=True) or {}
         ticker = body.get('ticker', '').upper().replace('.SA', '')
         name = body.get('name', '').strip()
         if not ticker:
@@ -139,7 +180,7 @@ def api_tickers_add():
         assets = load_tickers()
         if any(a['ticker'] == ticker for a in assets):
             return jsonify({'success': False, 'message': f'{ticker} já está na lista'}), 409
-        asset_type = 'FII' if '11' in ticker else 'Ação'
+        asset_type = 'FII' if is_fii(ticker) else 'Ação'
         assets.append({'ticker': ticker, 'name': name or asset_data['name'], 'type': asset_type})
         save_tickers(assets)
         update_asset(asset_data['ticker'], asset_data['name'], asset_data['type'],
@@ -234,21 +275,33 @@ def api_portfolio_dividends():
 def api_dividends_full():
     try:
         portfolio_data = get_portfolio(user_id)
-        result = fetch_dividends_full(portfolio_data)
+        result = fetch_dividends_full(portfolio_data, user_id)
         return jsonify({'success': True, 'data': result})
     except Exception as e:
         logger.error(f'Erro em /api/dividends/full: {e}')
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/api/fundamentals/clear-cache', methods=['POST'])
+def api_clear_fundamentals_cache():
+    """Força a próxima consulta de fundamentos/dividendos a ignorar o cache.
+    A função já existia (importada de fundamentals) mas nunca tinha uma rota
+    que a expusesse — não havia como o usuário invalidar o cache manualmente
+    após, por exemplo, uma correção de dados ou um desdobramento de ações."""
+    try:
+        clear_cache()
+        return jsonify({'success': True, 'message': 'Cache de fundamentos e dividendos limpo'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/api/portfolio/buy', methods=['POST'])
 def api_portfolio_buy():
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         ticker = data.get('ticker', '').upper()
-        quantity = float(data.get('quantity', 0))
-        price = float(data.get('price', 0))
+        quantity = _to_float(data.get('quantity'))
+        price = _to_float(data.get('price'))
         date = data.get('date') or None
-        if not ticker or quantity <= 0 or price <= 0:
+        if not ticker or quantity is None or price is None or quantity <= 0 or price <= 0:
             return jsonify({'success': False, 'message': 'Dados inválidos'}), 400
         if not get_asset(ticker):
             asset_data = fetch_any_asset(ticker)
@@ -264,12 +317,12 @@ def api_portfolio_buy():
 @app.route('/api/portfolio/sell', methods=['POST'])
 def api_portfolio_sell():
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         ticker = data.get('ticker', '').upper()
-        quantity = float(data.get('quantity', 0))
-        price = float(data.get('price', 0))
+        quantity = _to_float(data.get('quantity'))
+        price = _to_float(data.get('price'))
         date = data.get('date') or None
-        if not ticker or quantity <= 0 or price <= 0:
+        if not ticker or quantity is None or price is None or quantity <= 0 or price <= 0:
             return jsonify({'success': False, 'message': 'Dados inválidos'}), 400
         result = sell_asset(user_id, ticker, quantity, price, date)
         return jsonify(result) if result['success'] else (jsonify(result), 400)
@@ -287,10 +340,13 @@ def api_portfolio_transactions():
 @app.route('/api/portfolio/transactions/<int:tid>', methods=['PUT'])
 def api_transaction_update(tid):
     try:
-        data = request.get_json()
-        from database import update_transaction
-        update_transaction(tid, user_id, data.get('ticker','').upper(), data.get('type',''),
-                           float(data.get('quantity',0)), float(data.get('price',0)), data.get('date') or None)
+        data = request.get_json(silent=True) or {}
+        quantity = _to_float(data.get('quantity', 0))
+        price = _to_float(data.get('price', 0))
+        if quantity is None or price is None:
+            return jsonify({'success': False, 'message': 'Quantidade/preço inválidos'}), 400
+        update_transaction(tid, user_id, data.get('ticker', '').upper(), data.get('type', ''),
+                           quantity, price, data.get('date') or None)
         return jsonify({'success': True, 'message': 'Transação atualizada'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -298,7 +354,6 @@ def api_transaction_update(tid):
 @app.route('/api/portfolio/transactions/<int:tid>', methods=['DELETE'])
 def api_transaction_delete(tid):
     try:
-        from database import delete_transaction
         delete_transaction(tid, user_id)
         return jsonify({'success': True, 'message': 'Transação excluída'})
     except Exception as e:
@@ -307,10 +362,12 @@ def api_transaction_delete(tid):
 @app.route('/api/portfolio/<ticker>', methods=['PUT'])
 def api_portfolio_update(ticker):
     try:
-        data = request.get_json()
-        from database import set_portfolio_position
-        set_portfolio_position(user_id, ticker.upper(),
-                               float(data.get('quantity', 0)), float(data.get('average_price', 0)))
+        data = request.get_json(silent=True) or {}
+        quantity = _to_float(data.get('quantity', 0))
+        average_price = _to_float(data.get('average_price', 0))
+        if quantity is None or average_price is None:
+            return jsonify({'success': False, 'message': 'Quantidade/preço médio inválidos'}), 400
+        set_portfolio_position(user_id, ticker.upper(), quantity, average_price)
         return jsonify({'success': True, 'message': 'Posição atualizada'})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -318,7 +375,6 @@ def api_portfolio_update(ticker):
 @app.route('/api/portfolio/<ticker>', methods=['DELETE'])
 def api_portfolio_delete(ticker):
     try:
-        from database import delete_portfolio_position
         delete_portfolio_position(user_id, ticker.upper())
         return jsonify({'success': True, 'message': 'Posição removida'})
     except Exception as e:
@@ -332,9 +388,15 @@ def api_import_csv():
         if 'file' not in request.files:
             return jsonify({'success': False, 'message': 'Arquivo não fornecido'}), 400
         file = request.files['file']
-        if not file.filename.endswith('.csv'):
+        if not file.filename.lower().endswith('.csv'):
             return jsonify({'success': False, 'message': 'Apenas arquivos CSV são aceitos'}), 400
-        csv_data = file.read().decode('utf-8')
+        raw = file.read()
+        try:
+            # utf-8-sig também remove o BOM que o Excel costuma gravar
+            csv_data = raw.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            # Exportações do Excel/LibreOffice em pt-BR frequentemente usam latin-1
+            csv_data = raw.decode('latin-1')
         result = import_csv(user_id, csv_data)
         return jsonify(result) if result['success'] else (jsonify(result), 400)
     except Exception as e:
@@ -353,7 +415,6 @@ def api_recommendations():
 @app.route('/api/recommendations/full', methods=['GET'])
 def api_recommendations_full():
     try:
-        from recommendations import calculate_recommendation
         assets    = get_all_assets()
         portfolio = get_portfolio(user_id)
         port_map  = {p['ticker']: p for p in portfolio}
@@ -368,7 +429,7 @@ def api_recommendations_full():
             profit_pct = None
             if pos:
                 avg = pos['average_price']
-                cur = asset.get('current_price') or avg
+                cur = asset.get('current_price') if asset.get('current_price') is not None else avg
                 profit_pct = round((cur - avg) / avg * 100, 2) if avg else None
             result.append({
                 'ticker': asset['ticker'].replace('.SA', ''), 'name': asset.get('name', ''),
@@ -383,7 +444,7 @@ def api_recommendations_full():
                 'bb_upper': rec.get('bb_upper'), 'bb_lower': rec.get('bb_lower'),
                 'in_portfolio': pos is not None, 'profit_pct': profit_pct,
             })
-        result.sort(key=lambda x: (0 if x['recommendation']=='COMPRA' else 1 if x['recommendation']=='MANUTENÇÃO' else 2, -x['confidence']))
+        result.sort(key=lambda x: (0 if x['recommendation']=='COMPRA' else 1 if x['recommendation']=='MANUTENÇÃO' else 2, -(x['confidence'] or 0)))
         return jsonify({'success': True, 'data': result})
     except Exception as e:
         logger.error(f'Erro em /api/recommendations/full: {e}')
@@ -410,10 +471,6 @@ def api_analysis(ticker):
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-def fmt_price(v):
-    return f'R$ {v:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
-
-
 # ==================== API - APORTE ====================
 
 @app.route('/api/portfolio/next-buy', methods=['GET'])
@@ -434,7 +491,7 @@ def api_next_buy():
         scored = []
         for pos in portfolio_data:
             asset = get_asset(pos['ticker']) or {}
-            price = asset.get('current_price') or pos['average_price']
+            price = asset.get('current_price') if asset.get('current_price') is not None else pos['average_price']
             if not price or price <= 0:
                 continue
 
@@ -533,8 +590,8 @@ def api_next_buy():
 def api_portfolio_allocate():
     """Recomenda compras para um valor fixo de aporte baseado nos ativos da carteira."""
     try:
-        budget = float(request.args.get('budget', 0))
-        if budget <= 0:
+        budget = _to_float(request.args.get('budget', 0))
+        if budget is None or budget <= 0:
             return jsonify({'success': False, 'message': 'Informe um valor de aporte válido'}), 400
 
         portfolio_data = get_portfolio(user_id)
@@ -647,7 +704,6 @@ def api_portfolio_allocate():
 def api_dashboard():
     """Dados consolidados para o dashboard: performance, saúde da carteira, oportunidades e transações."""
     try:
-        from portfolio import get_portfolio_performance
         performance  = get_portfolio_performance(user_id)
         health       = get_portfolio_health(user_id)
         opportunities = get_market_opportunities(limit=5)
@@ -680,4 +736,4 @@ def internal_error(error):
     return jsonify({'success': False, 'message': 'Erro interno do servidor'}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=config.FLASK_DEBUG, host=config.FLASK_HOST, port=config.FLASK_PORT)

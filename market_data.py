@@ -13,10 +13,16 @@ TICKERS_FILE = os.path.join(os.path.dirname(__file__), 'tickers.json')
 
 
 def load_tickers():
-    """Carrega tickers do arquivo tickers.json."""
-    with open(TICKERS_FILE, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    return data['assets']
+    """Carrega tickers do arquivo tickers.json. Retorna lista vazia (com log de
+    erro) em vez de derrubar a aplicação inteira se o arquivo faltar ou estiver
+    corrompido, já que este módulo é importado na inicialização do app."""
+    try:
+        with open(TICKERS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data.get('assets', [])
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.error(f"Erro ao carregar {TICKERS_FILE}: {e}")
+        return []
 
 
 def save_tickers(assets):
@@ -35,8 +41,24 @@ def get_asset_names():
     return {a['ticker']: a['name'] for a in load_tickers()}
 
 
+def get_asset_types():
+    """Retorna dict ticker -> tipo ('Ação'/'FII'), conforme cadastrado em tickers.json."""
+    return {a['ticker']: a.get('type', '') for a in load_tickers()}
+
+
+def is_fii(ticker_base):
+    """Determina se um ticker é FII. Usa o cadastro local (tickers.json) como
+    fonte de verdade — necessário porque tickers de 'units' como SANB11, BPAC11
+    e TAEE11 também terminam em 11 mas são ações, não fundos imobiliários.
+    Cai para uma heurística por sufixo apenas para tickers ainda não cadastrados."""
+    known_type = get_asset_types().get(ticker_base)
+    if known_type:
+        return 'FII' in known_type.upper()
+    return ticker_base.endswith('11')
+
+
 # Aliases para compatibilidade
-MONITORED_ASSETS = property(get_monitored_list) if False else get_monitored_list()
+MONITORED_ASSETS = get_monitored_list()
 ASSET_NAMES = get_asset_names()
 
 _HEADERS = {
@@ -74,14 +96,18 @@ def fetch_asset_data(ticker):
 
         current_price = float(qtn.get('curPrc', 0))
         variation_percent = float(qtn.get('prcFlcn', 0))
-        open_price = float(qtn.get('opngPric', current_price))
-        variation_value = current_price - open_price
+        # Deriva a variação em R$ do mesmo referencial percentual (fechamento
+        # anterior) usado por variation_percent, em vez do preço de abertura —
+        # evita mostrar variação percentual e em R$ com sinais divergentes em
+        # dias de gap entre fechamento anterior e abertura.
+        prev_close = current_price / (1 + variation_percent / 100) if variation_percent != -100 else current_price
+        variation_value = current_price - prev_close
         names = get_asset_names()
 
         return {
             'ticker': f'{ticker_base}.SA',
             'name': names.get(ticker_base, desc),
-            'type': 'FII' if '11' in ticker_base else 'Ação',
+            'type': 'FII' if is_fii(ticker_base) else 'Ação',
             'current_price': round(current_price, 2),
             'variation_percent': round(variation_percent, 2),
             'variation_value': round(variation_value, 2),
@@ -134,6 +160,23 @@ def fetch_historical_data(ticker, period='1y'):
         return False
 
 
+def _record_daily_close(ticker_sa, price):
+    """Registra a cotação do dia em price_history usando a B3 (fonte que ainda
+    funciona), já que o histórico do Status Invest está bloqueado por um
+    desafio anti-bot do Cloudflare (fetch_historical_data não recebe mais
+    dados desde então). Sem isso, RSI/MACD/SMAs ficam congelados na última
+    data em que o Status Invest respondeu, e recomendações passam a ser
+    calculadas sobre um preço cada vez mais desatualizado.
+    Só grava uma vez por dia, mesmo rodando a cada 15 min via scheduler."""
+    if not price or price <= 0:
+        return
+    today = datetime.now().strftime('%Y-%m-%d')
+    existing = get_price_history(ticker_sa, days=1)
+    if existing and existing[0]['date'][:10] == today:
+        return
+    save_price_history(ticker_sa, today, price, price, price, price, 0)
+
+
 def update_all_assets():
     """Atualiza cotações de todos os ativos via B3."""
     logger.info("Iniciando atualização de ativos...")
@@ -147,6 +190,7 @@ def update_all_assets():
                 data['current_price'], data['variation_percent'],
                 data['variation_value'], data['market_cap'], data['volume']
             )
+            _record_daily_close(data['ticker'], data['current_price'])
             logger.info(f"Atualizado: {data['ticker']} - R$ {data['current_price']} ({data['variation_percent']:+.2f}%)")
         else:
             logger.warning(f"Sem dados para {ticker}")

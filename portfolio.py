@@ -1,10 +1,21 @@
-from database import (
-    add_transaction, update_portfolio, get_portfolio, 
-    get_asset, get_transactions, get_portfolio_summary
-)
+import csv
+import io
 import logging
 
+from database import (
+    add_transaction_and_update_portfolio, get_portfolio, get_asset
+)
+
 logger = logging.getLogger(__name__)
+
+_EMPTY_PERFORMANCE = {
+    'total_invested': 0,
+    'total_current_value': 0,
+    'total_profit_loss': 0,
+    'total_profit_loss_percent': 0,
+    'assets_count': 0
+}
+
 
 def buy_asset(user_id, ticker, quantity, price, date=None):
     """Registra compra de um ativo"""
@@ -12,14 +23,16 @@ def buy_asset(user_id, ticker, quantity, price, date=None):
         asset = get_asset(ticker)
         if not asset:
             return {'success': False, 'message': f'Ativo {ticker} não encontrado'}
-        
+
         if quantity <= 0:
             return {'success': False, 'message': 'Quantidade deve ser maior que zero'}
-        
+
         total_value = quantity * price
-        add_transaction(user_id, ticker, 'compra', quantity, price, date=date)
-        update_portfolio(user_id, ticker, quantity, price)
-        
+        add_transaction_and_update_portfolio(
+            user_id, ticker, 'compra', quantity, price,
+            portfolio_qty_delta=quantity, portfolio_ref_price=price, date=date
+        )
+
         logger.info(f"Compra registrada: {ticker} x{quantity} @ R${price} em {date or 'hoje'}")
         return {
             'success': True,
@@ -30,27 +43,32 @@ def buy_asset(user_id, ticker, quantity, price, date=None):
         logger.error(f"Erro ao comprar {ticker}: {str(e)}")
         return {'success': False, 'message': f'Erro: {str(e)}'}
 
+
 def sell_asset(user_id, ticker, quantity, price, date=None):
     """Registra venda de um ativo"""
     try:
         portfolio = get_portfolio(user_id)
         asset_in_portfolio = next((p for p in portfolio if p['ticker'] == ticker), None)
-        
+
         if not asset_in_portfolio:
             return {'success': False, 'message': f'Você não possui {ticker}'}
-        if quantity > asset_in_portfolio['quantity']:
-            return {'success': False, 'message': f'Quantidade insuficiente. Você possui {asset_in_portfolio["quantity"]}'}
         if quantity <= 0:
             return {'success': False, 'message': 'Quantidade deve ser maior que zero'}
-        
+        held_quantity = asset_in_portfolio['quantity']
+        if quantity > held_quantity:
+            return {'success': False, 'message': f'Quantidade insuficiente. Você possui {held_quantity}'}
+
         cost_price = asset_in_portfolio['average_price']
         profit_loss = (price - cost_price) * quantity
         profit_loss_percent = ((price - cost_price) / cost_price * 100) if cost_price != 0 else 0
         total_value = quantity * price
-        
-        add_transaction(user_id, ticker, 'venda', quantity, price, profit_loss, date=date)
-        update_portfolio(user_id, ticker, -quantity, cost_price)
-        
+
+        add_transaction_and_update_portfolio(
+            user_id, ticker, 'venda', quantity, price,
+            portfolio_qty_delta=-quantity, portfolio_ref_price=cost_price,
+            profit_loss=profit_loss, date=date
+        )
+
         logger.info(f"Venda registrada: {ticker} x{quantity} @ R${price} | Ganho/Perda: R${profit_loss}")
         return {
             'success': True,
@@ -63,33 +81,29 @@ def sell_asset(user_id, ticker, quantity, price, date=None):
         logger.error(f"Erro ao vender {ticker}: {str(e)}")
         return {'success': False, 'message': f'Erro: {str(e)}'}
 
+
 def get_portfolio_performance(user_id):
     """Calcula performance da carteira"""
     try:
         portfolio = get_portfolio(user_id)
-        
+
         if not portfolio:
-            return {
-                'total_invested': 0,
-                'total_current_value': 0,
-                'total_profit_loss': 0,
-                'total_profit_loss_percent': 0,
-                'assets_count': 0
-            }
-        
+            return dict(_EMPTY_PERFORMANCE)
+
         total_invested = 0
         total_current_value = 0
-        
+
         for asset in portfolio:
+            current_price = asset['current_price'] if asset['current_price'] is not None else asset['average_price']
             invested = asset['quantity'] * asset['average_price']
-            current = asset['quantity'] * (asset['current_price'] or asset['average_price'])
-            
+            current = asset['quantity'] * current_price
+
             total_invested += invested
             total_current_value += current
-        
+
         total_profit_loss = total_current_value - total_invested
         total_profit_loss_percent = (total_profit_loss / total_invested * 100) if total_invested != 0 else 0
-        
+
         return {
             'total_invested': round(total_invested, 2),
             'total_current_value': round(total_current_value, 2),
@@ -99,36 +113,47 @@ def get_portfolio_performance(user_id):
         }
     except Exception as e:
         logger.error(f"Erro ao calcular performance: {str(e)}")
-        return None
+        return dict(_EMPTY_PERFORMANCE)
+
 
 def import_csv(user_id, csv_data):
-    """Importa dados de carteira via CSV"""
+    """Importa dados de carteira via CSV. Colunas obrigatórias: ticker, quantity,
+    price; coluna opcional: date. A ordem das colunas no cabeçalho é livre."""
     try:
-        lines = csv_data.strip().split('\n')
-        
-        if not lines:
+        csv_data = csv_data.strip()
+        if not csv_data:
             return {'success': False, 'message': 'CSV vazio'}
-        
-        # Pula header
-        header = lines[0].lower()
-        if 'ticker' not in header or 'quantity' not in header or 'price' not in header:
+
+        rows = list(csv.reader(io.StringIO(csv_data)))
+        if not rows:
+            return {'success': False, 'message': 'CSV vazio'}
+
+        header = [h.strip().lower() for h in rows[0]]
+        required = ('ticker', 'quantity', 'price')
+        if not all(col in header for col in required):
             return {'success': False, 'message': 'Formato CSV inválido. Esperado: ticker,quantity,price,date'}
-        
+
+        col_idx = {col: header.index(col) for col in required}
+        date_idx = header.index('date') if 'date' in header else None
+
         imported = 0
         errors = []
-        
-        for i, line in enumerate(lines[1:], start=2):
+
+        for i, parts in enumerate(rows[1:], start=2):
+            if not parts or all(not p.strip() for p in parts):
+                continue
             try:
-                parts = line.strip().split(',')
-                if len(parts) < 3:
+                if len(parts) < len(header):
                     errors.append(f"Linha {i}: Dados insuficientes")
                     continue
-                
-                ticker = parts[0].strip().upper()
-                quantity = float(parts[1].strip())
-                price = float(parts[2].strip())
-                date = parts[3].strip() if len(parts) > 3 else None
-                
+
+                ticker = parts[col_idx['ticker']].strip().upper()
+                quantity = float(parts[col_idx['quantity']].strip())
+                price = float(parts[col_idx['price']].strip())
+                date = None
+                if date_idx is not None and date_idx < len(parts):
+                    date = parts[date_idx].strip() or None
+
                 result = buy_asset(user_id, ticker, quantity, price, date)
                 if result['success']:
                     imported += 1
@@ -138,11 +163,11 @@ def import_csv(user_id, csv_data):
                 errors.append(f"Linha {i}: Erro de conversão - {str(e)}")
             except Exception as e:
                 errors.append(f"Linha {i}: {str(e)}")
-        
+
         message = f"Importação concluída: {imported} ativos importados"
         if errors:
             message += f" com {len(errors)} erro(s)"
-        
+
         return {
             'success': True,
             'message': message,

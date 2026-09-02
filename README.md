@@ -74,35 +74,35 @@ reguladorfinanceiro/
 
 ## API Endpoints
 
-| Método | Rota | Descrição |
-|--------|------|-----------|
-| GET | `/api/market` | Lista todos os ativos |
-| GET | `/api/market/<ticker>` | Detalhes de um ativo |
-| GET | `/api/market/search?q=` | Busca por ticker ou nome |
-| GET | `/api/analysis/<ticker>` | Análise técnica |
-| GET | `/api/portfolio` | Carteira do usuário |
-| POST | `/api/portfolio/buy` | Comprar ativo |
-| POST | `/api/portfolio/sell` | Vender ativo |
-| GET | `/api/portfolio/transactions` | Histórico de transações |
-| GET | `/api/portfolio/dividends` | Dividendos da carteira (resumo) |
-| GET | `/api/dividends/full` | Dividendos completos (histórico + próximos) |
-| POST | `/api/import/csv` | Importação em lote via CSV |
-| GET | `/api/recommendations` | Lista recomendações |
-| GET | `/api/recommendations/<ticker>` | Recomendação de um ativo |
-| GET | `/api/health` | Health check |
+| Método | Rota                              | Descrição                                   |
+| ------- | --------------------------------- | --------------------------------------------- |
+| GET     | `/api/market`                   | Lista todos os ativos                         |
+| GET     | `/api/market/<ticker>`          | Detalhes de um ativo                          |
+| GET     | `/api/market/search?q=`         | Busca por ticker ou nome                      |
+| GET     | `/api/analysis/<ticker>`        | Análise técnica                             |
+| GET     | `/api/portfolio`                | Carteira do usuário                          |
+| POST    | `/api/portfolio/buy`            | Comprar ativo                                 |
+| POST    | `/api/portfolio/sell`           | Vender ativo                                  |
+| GET     | `/api/portfolio/transactions`   | Histórico de transações                    |
+| GET     | `/api/portfolio/dividends`      | Dividendos da carteira (resumo)               |
+| GET     | `/api/dividends/full`           | Dividendos completos (histórico + próximos) |
+| POST    | `/api/import/csv`               | Importação em lote via CSV                  |
+| GET     | `/api/recommendations`          | Lista recomendações                         |
+| GET     | `/api/recommendations/<ticker>` | Recomendação de um ativo                    |
+| GET     | `/api/health`                   | Health check                                  |
 
 ---
 
 ## Banco de Dados
 
-| Tabela | Descrição |
-|--------|-----------|
-| `users` | Usuários da aplicação |
-| `assets` | Ativos monitorados com preço e variação |
-| `portfolio` | Carteira do usuário (quantidade, preço médio) |
-| `transactions` | Histórico de compras e vendas |
-| `recommendations` | Recomendações geradas |
-| `price_history` | Histórico de preços (OHLCV) |
+| Tabela              | Descrição                                      |
+| ------------------- | ------------------------------------------------ |
+| `users`           | Usuários da aplicação                         |
+| `assets`          | Ativos monitorados com preço e variação       |
+| `portfolio`       | Carteira do usuário (quantidade, preço médio) |
+| `transactions`    | Histórico de compras e vendas                   |
+| `recommendations` | Recomendações geradas                          |
+| `price_history`   | Histórico de preços (OHLCV)                    |
 
 ---
 
@@ -158,17 +158,20 @@ Para mais detalhes, veja [DIVIDENDS_GUIDE.md](DIVIDENDS_GUIDE.md)
 ## Cálculos
 
 **Preço médio**
+
 ```
 preço_médio = (qtd_anterior × preço_anterior + qtd_nova × preço_novo) / (qtd_anterior + qtd_nova)
 ```
 
 **Ganho/Perda**
+
 ```
 ganho_perda = (preço_venda - preço_médio) × quantidade
 percentual  = (ganho_perda / (preço_médio × quantidade)) × 100
 ```
 
 **Score de recomendação**
+
 ```
 score = (variação_7d × 0.4) + (volume_trend × 0.3) + (RSI × 0.3)
 score > 5  → COMPRA
@@ -177,6 +180,7 @@ demais     → MANUTENÇÃO
 ```
 
 **Dividend Yield (DY)**
+
 ```
 DY = (Dividendo Anual / Preço Atual) × 100
 ```
@@ -194,14 +198,14 @@ python test.py
 
 ## Troubleshooting
 
-| Erro | Solução |
-|------|---------| 
-| `ModuleNotFoundError: flask` | Execute `./install.sh` |
-| `Address already in use` | Altere a porta em `app.py` (padrão: 5000) |
-| Banco de dados corrompido | `rm data/regulador.db && ./run.sh` |
-| Preços não atualizam | Verifique a conexão com a internet |
-| Aplicação lenta | Reduza ativos em `market_data.py` |
-| Dividendos não aparecem | Verifique se há ativos na carteira e clique em "Atualizar" |
+| Erro                           | Solução                                                   |
+| ------------------------------ | ----------------------------------------------------------- |
+| `ModuleNotFoundError: flask` | Execute`./install.sh`                                     |
+| `Address already in use`     | Altere a porta em`app.py` (padrão: 5000)                 |
+| Banco de dados corrompido      | `rm data/regulador.db && ./run.sh`                        |
+| Preços não atualizam         | Verifique a conexão com a internet                         |
+| Aplicação lenta              | Reduza ativos em`market_data.py`                          |
+| Dividendos não aparecem       | Verifique se há ativos na carteira e clique em "Atualizar" |
 
 ---
 

@@ -1,5 +1,5 @@
 from database import (
-    get_price_history, save_recommendation, get_recommendation,
+    get_price_history, save_recommendation,
     get_all_assets, get_portfolio, get_recommendations
 )
 import logging
@@ -235,13 +235,23 @@ def update_all_recommendations():
 
 
 def get_top_recommendations(limit=10):
+    """Retorna até `limit` recomendações, tentando equilibrar entre COMPRA/VENDA/
+    MANUTENÇÃO, mas preenchendo com as demais categorias quando uma delas não
+    tiver itens suficientes para sua cota (em vez de devolver menos que `limit`)."""
     recs = get_recommendations()
     buy  = sorted([r for r in recs if r['recommendation'] == 'COMPRA'],
                   key=lambda x: x['confidence_score'], reverse=True)
     sell = sorted([r for r in recs if r['recommendation'] == 'VENDA'],
                   key=lambda x: x['confidence_score'], reverse=True)
     hold = [r for r in recs if r['recommendation'] == 'MANUTENÇÃO']
-    return (buy[:limit // 3] + sell[:limit // 3] + hold[:limit // 3])[:limit]
+
+    share = limit // 3
+    result = buy[:share] + sell[:share] + hold[:share]
+    if len(result) < limit:
+        used_ids = {id(r) for r in result}
+        leftover = [r for r in (buy[share:] + sell[share:] + hold[share:]) if id(r) not in used_ids]
+        result += leftover[:limit - len(result)]
+    return result[:limit]
 
 
 # ── Oportunidades de mercado ──────────────────────────────────────────────────
@@ -287,7 +297,7 @@ def get_portfolio_health(user_id):
     for pos in portfolio:
         ticker = pos['ticker']
         avg    = pos['average_price']
-        cur    = pos.get('current_price') or avg
+        cur    = pos.get('current_price') if pos.get('current_price') is not None else avg
         qty    = pos['quantity']
 
         if avg <= 0:
@@ -363,7 +373,9 @@ def get_portfolio_health(user_id):
         'neutral': neutral,
         'bad':     bad,
         'summary': {
-            'total':    len(portfolio),
+            # well+neutral+bad (não len(portfolio)): posições com average_price <= 0
+            # são puladas acima e não entram em nenhuma das três listas.
+            'total':    len(well) + len(neutral) + len(bad),
             'well':     len(well),
             'neutral':  len(neutral),
             'bad':      len(bad),

@@ -3,33 +3,47 @@ import math
 import logging
 import json
 import os
+import threading
+from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
+from market_data import is_fii
+
 logger = logging.getLogger(__name__)
 
+# O Status Invest (fonte antiga de fundamentos/dividendos) passou a bloquear
+# as requisições com um desafio anti-bot do Cloudflare (HTTP 403,
+# `cf-mitigated: challenge`) — não é algo contornável trocando User-Agent, é
+# uma verificação de navegador de verdade.
+#
+# Avaliei a brapi.dev (API pública) como alternativa, mas na prática o acesso
+# sem token só funciona para uma vitrine de poucos tickers "demo" (PETR4,
+# VALE3, ITUB4...) — qualquer outro ticker real da carteira (BBAS3, CMIG4,
+# ABEV3, WEGE3, todos os FIIs...) responde 401 "Token não fornecido". Como o
+# objetivo é não depender de criar conta em lugar nenhum, a fonte usada é o
+# investidor10.com.br: não tem API pública, mas os indicadores (P/L, P/VP,
+# LPA, VPA, ROE, DY) e o histórico de proventos já vêm renderizados na própria
+# página HTML, então dá pra extrair sem login/token/JS — tanto para ações
+# quanto para FIIs. É mais frágil que uma API de verdade (quebra se o site
+# mudar a marcação), mas não exige nenhum cadastro.
 _HEADERS = {
     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
                   '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'X-Requested-With': 'XMLHttpRequest',
-    'Referer': 'https://statusinvest.com.br/',
 }
 
-_SI_INDICATORS = (
-    'https://statusinvest.com.br/acao/indicatorhistoricallist'
-    '?codes={ticker}&time=3&byQuarter=false&futureData=false'
-)
-_SI_DIVIDENDS = (
-    'https://statusinvest.com.br/acao/companytickerprovents'
-    '?ticker={ticker}&chartProventsType=2'
-)
+_INVESTIDOR10_STOCK_URL = 'https://investidor10.com.br/acoes/{ticker}/'
+_INVESTIDOR10_FII_URL   = 'https://investidor10.com.br/fiis/{ticker}/'
 
 _CACHE_FILE = os.path.join(os.path.dirname(__file__), 'data', 'fund_cache.json')
 _CACHE_TTL  = timedelta(hours=6)
 
 # Cache em memória: {ticker_base: {'data': {...}, 'ts': iso_str}}
 _mem_cache: dict = {}
+# Protege a leitura+escrita do cache em disco: enrich_portfolio roda _cache_set
+# de várias threads ao mesmo tempo, e sem lock a última a salvar sobrescreve
+# (perde) as entradas gravadas pelas outras.
+_disk_cache_lock = threading.Lock()
 
 
 def _load_disk_cache():
@@ -64,79 +78,185 @@ def _cache_get(ticker_base):
 def _cache_set(ticker_base, data):
     entry = {'data': data, 'ts': datetime.now().isoformat()}
     _mem_cache[ticker_base] = entry
-    disk = _load_disk_cache()
-    disk[ticker_base] = entry
-    _save_disk_cache(disk)
+    with _disk_cache_lock:
+        disk = _load_disk_cache()
+        disk[ticker_base] = entry
+        _save_disk_cache(disk)
 
 
-def _get_json(url):
+def _parse_br_number(txt):
+    """Converte '9,07%' / 'R$ 166,43' / '0,88' (formato pt-BR) para float."""
+    if not txt:
+        return None
+    txt = txt.replace('R$', '').replace('%', '').strip()
+    txt = txt.replace('.', '').replace(',', '.')
     try:
-        r = requests.get(url, headers=_HEADERS, timeout=12)
-        if r.status_code == 200 and r.text.strip().startswith('{'):
-            return r.json()
+        return float(txt)
+    except ValueError:
+        return None
+
+
+def _fetch_i10_page(url):
+    """Busca e parseia uma página do investidor10.com.br. Retorna None (sem
+    lançar exceção) se a requisição falhar."""
+    try:
+        r = requests.get(url, headers=_HEADERS, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f'investidor10 {url}: HTTP {r.status_code}')
+            return None
+        return BeautifulSoup(r.text, 'html.parser')
     except Exception as e:
-        logger.warning(f'Erro ao buscar {url[-60:]}: {e}')
+        logger.warning(f'Erro ao buscar {url} no investidor10: {e}')
+        return None
+
+
+def _parse_i10_dividends_table(soup):
+    """Extrai a tabela de histórico de proventos (#table-dividends-history),
+    presente tanto nas páginas de ações quanto de FIIs no mesmo formato:
+    tipo | data com (ex-dividendo) | pagamento | valor por ação/cota."""
+    now = datetime.now()
+    events = []
+    table = soup.find('table', id='table-dividends-history')
+    if not table or not table.find('tbody'):
+        return events
+    for row in table.find('tbody').find_all('tr'):
+        cells = [td.get_text(strip=True) for td in row.find_all('td')]
+        if len(cells) < 4:
+            continue
+        try:
+            tipo, data_com, pagamento, valor_txt = cells[:4]
+            pay_dt = datetime.strptime(pagamento, '%d/%m/%Y')
+            ex_dt  = datetime.strptime(data_com, '%d/%m/%Y') if data_com else None
+            value  = _parse_br_number(valor_txt)
+            if not value or value <= 0:
+                continue
+            events.append({
+                'pay_date': pay_dt.strftime('%Y-%m-%d'),
+                'ex_date':  ex_dt.strftime('%Y-%m-%d') if ex_dt else None,
+                'value':    round(value, 6),
+                'type':     tipo or 'Dividendo',
+                'status':   'futuro' if pay_dt > now else 'pago',
+            })
+        except Exception:
+            continue
+    return events
+
+
+def _extract_i10_card(soup, css_class):
+    """Extrai o valor de um card de indicador no topo da página
+    (ex.: <div class="_card dy">...<span>9,07%</span></div>)."""
+    el = soup.select_one(f'div._card.{css_class} ._card-body span')
+    return _parse_br_number(el.get_text(strip=True)) if el else None
+
+
+def _extract_i10_cell(soup, label):
+    """Extrai o valor de uma linha da lista de indicadores de FIIs
+    (ex.: 'VAL. PATRIMONIAL P/ COTA' -> 'R$ 166,43')."""
+    for cell in soup.select('div.cell'):
+        name = cell.select_one('.name')
+        if name and ' '.join(name.get_text(strip=True).split()) == label:
+            val = cell.select_one('.value span')
+            if val:
+                return _parse_br_number(val.get_text(strip=True))
     return None
 
 
-def fetch_fundamentals(ticker):
-    """
-    Retorna dict com indicadores fundamentalistas do ativo.
-    Usa cache em disco (TTL 6h). Faz as 2 requisições em paralelo.
-    """
-    ticker_base = ticker.replace('.SA', '')
+def _extract_i10_indicator(soup, label):
+    """Extrai o valor de um indicador na lista de fundamentos de ações
+    (<article class="indicator-card"><...title>LABEL</...><...value>X</...>)."""
+    for card in soup.select('article.indicator-card'):
+        title = card.select_one('.indicator-card-title span')
+        if title and title.get_text(strip=True) == label:
+            val = card.select_one('.indicator-card-value span')
+            if val:
+                return _parse_br_number(val.get_text(strip=True))
+    return None
 
+
+def _fetch_stock_raw(ticker_base):
+    """Busca fundamentos + histórico de dividendos de uma ação via
+    investidor10.com.br (ver nota no topo do arquivo sobre a escolha da fonte)."""
+    soup = _fetch_i10_page(_INVESTIDOR10_STOCK_URL.format(ticker=ticker_base.lower()))
+    if soup is None:
+        return None
+    return {
+        'dy':     _extract_i10_indicator(soup, 'Dividend Yield'),
+        'lpa':    _extract_i10_indicator(soup, 'LPA'),
+        'vpa':    _extract_i10_indicator(soup, 'VPA'),
+        'p_l':    _extract_i10_indicator(soup, 'P/L'),
+        'p_vp':   _extract_i10_indicator(soup, 'P/VP'),
+        'roe':    _extract_i10_indicator(soup, 'ROE'),
+        'dividend_events': _parse_i10_dividends_table(soup),
+    }
+
+
+def _fetch_fii_raw(ticker_base):
+    """Busca fundamentos + histórico de proventos de um FII via
+    investidor10.com.br (a página de FII usa uma marcação diferente da de
+    ações para os indicadores, por isso os seletores são outros)."""
+    soup = _fetch_i10_page(_INVESTIDOR10_FII_URL.format(ticker=ticker_base.lower()))
+    if soup is None:
+        return None
+    return {
+        'dy':     _extract_i10_card(soup, 'dy'),
+        'lpa':    None,
+        'vpa':    _extract_i10_cell(soup, 'VAL. PATRIMONIAL P/ COTA'),
+        'p_l':    None,
+        'p_vp':   _extract_i10_card(soup, 'vp'),
+        'roe':    None,
+        'dividend_events': _parse_i10_dividends_table(soup),
+    }
+
+
+def _fetch_raw(ticker_base):
+    """Ponto único de acesso aos dados brutos (fundamentos + proventos),
+    cacheado (mem + disco, TTL 6h) e compartilhado por fetch_fundamentals,
+    fetch_dividends_detail e _fetch_all_events — antes cada um batia na fonte
+    externa separadamente, triplicando requisições para o mesmo ticker."""
     cached = _cache_get(ticker_base)
     if cached is not None:
         return cached
+    data = _fetch_fii_raw(ticker_base) if is_fii(ticker_base) else _fetch_stock_raw(ticker_base)
+    if data is not None:
+        _cache_set(ticker_base, data)
+    return data
 
-    # Duas requisições em paralelo
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        f_ind = ex.submit(_get_json, _SI_INDICATORS.format(ticker=ticker_base))
-        f_div = ex.submit(_get_json, _SI_DIVIDENDS.format(ticker=ticker_base))
-        ind_data = f_ind.result()
-        div_data = f_div.result()
 
-    # ── Indicadores ──────────────────────────────────────
-    indicators = {}
-    if ind_data and 'data' in ind_data:
-        key = list(ind_data['data'].keys())[0]
-        for item in ind_data['data'].get(key, []):
-            v = item.get('actual')
-            if v is not None:
-                indicators[item['key']] = float(v)
+def _trailing_12m_dpa(events):
+    """Soma os proventos pagos nos últimos 365 dias (dividendo por ação/cota
+    "trailing twelve months"). Substitui a extrapolação por ano-calendário
+    usada antes (que tinha um bug de virada de ano em outubro e podia
+    superestimar muito cedo no ano) — agora é sempre um valor realmente pago,
+    nunca uma projeção."""
+    if not events:
+        return None
+    cutoff = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+    total = sum(e['value'] for e in events if e['status'] == 'pago' and e.get('pay_date', '') >= cutoff)
+    return round(total, 4) if total > 0 else None
 
-    dy   = indicators.get('dy')
-    lpa  = indicators.get('lpa')
-    vpa  = indicators.get('vpa')
-    p_l  = indicators.get('p_l')
-    p_vp = indicators.get('p_vp')
-    roe  = indicators.get('roe')
 
-    # ── DPA anual ─────────────────────────────────────────
-    dpa = None
-    if div_data:
-        try:
-            now      = datetime.now()
-            pay_year = now.year + (1 if now.month >= 10 else 0)
-            yearly   = {y['rank']: y['value']
-                        for y in div_data.get('assetEarningsYearlyModels', [])}
-            last_full       = yearly.get(pay_year - 1, 0)
-            curr_partial    = yearly.get(pay_year, 0)
-            annualized_curr = (curr_partial / (now.month / 12)) if curr_partial > 0 else 0
-            raw = max(last_full, annualized_curr)
-            dpa = raw if raw > 0 else None
-        except (ValueError, KeyError, ZeroDivisionError):
-            pass
+def fetch_fundamentals(ticker):
+    """Retorna dict com indicadores fundamentalistas do ativo (ações via
+    brapi.dev, FIIs via investidor10.com.br — ver _fetch_raw)."""
+    ticker_base = ticker.replace('.SA', '')
+    raw = _fetch_raw(ticker_base)
+    if raw is None:
+        return {'dy': None, 'lpa': None, 'vpa': None, 'p_l': None, 'p_vp': None,
+                'roe': None, 'dpa': None, 'graham': None, 'bazin': None}
 
-    # ── Preços justos ─────────────────────────────────────
+    dy, lpa, vpa, p_l, p_vp, roe = (raw.get(k) for k in ('dy', 'lpa', 'vpa', 'p_l', 'p_vp', 'roe'))
+    dpa = _trailing_12m_dpa(raw.get('dividend_events') or [])
+
     graham = None
     if lpa and vpa and lpa > 0 and vpa > 0:
         graham = round(math.sqrt(22.5 * lpa * vpa), 2)
 
-    bazin = round(dpa / 0.06, 2) if dpa and dpa > 0 else None
+    # FIIs exigem yield mínimo maior (8%) que ações (6%) no teto de Bazin,
+    # mesmo critério já usado em _ideal_pct_by_income/_buy_signal.
+    required_yield = 0.08 if is_fii(ticker_base) else 0.06
+    bazin = round(dpa / required_yield, 2) if dpa and dpa > 0 else None
 
-    result = {
+    return {
         'dy':     round(dy, 2)   if dy   is not None else None,
         'lpa':    round(lpa, 4)  if lpa  is not None else None,
         'vpa':    round(vpa, 4)  if vpa  is not None else None,
@@ -147,8 +267,6 @@ def fetch_fundamentals(ticker):
         'graham': graham,
         'bazin':  bazin,
     }
-    _cache_set(ticker_base, result)
-    return result
 
 
 def _ideal_pct_by_income(dy, is_fii):
@@ -164,7 +282,7 @@ def _enrich_one(pos, total_current_value):
     """Enriquece uma única posição — pode ser chamado em paralelo."""
     ticker      = pos['ticker']
     ticker_base = ticker.replace('.SA', '')
-    current_price = pos.get('current_price') or pos['average_price']
+    current_price = pos.get('current_price') if pos.get('current_price') is not None else pos['average_price']
     avg_price     = pos['average_price']
     quantity      = pos['quantity']
 
@@ -183,8 +301,8 @@ def _enrich_one(pos, total_current_value):
 
     yc = round((dpa / avg_price * 100), 2) if dpa and avg_price else None
 
-    is_fii = '11' in ticker_base
-    if is_fii:
+    ticker_is_fii = is_fii(ticker_base)
+    if ticker_is_fii:
         vpa = fund.get('vpa')
         fair_price = round(vpa, 2) if vpa else None
     else:
@@ -192,8 +310,8 @@ def _enrich_one(pos, total_current_value):
 
     references       = [p for p in [fair_price, bazin] if p]
     negotiable_price = round(min(references) * 0.90, 2) if references else None
-    ideal_income_pct = _ideal_pct_by_income(dy, is_fii)
-    buy_signal       = _buy_signal(current_price, fair_price, bazin, dy, profit_pct, is_fii)
+    ideal_income_pct = _ideal_pct_by_income(dy, ticker_is_fii)
+    buy_signal       = _buy_signal(current_price, fair_price, bazin, dy, profit_pct, ticker_is_fii)
 
     return {
         **pos,
@@ -270,98 +388,63 @@ def _buy_signal(price, fair, ceiling, dy, profit_pct, is_fii):
         return {'action': 'COMPRAR', 'cls': 'green', 'reason': '; '.join(signals)}
     elif sell_count >= 2:
         return {'action': 'AGUARDAR', 'cls': 'red', 'reason': '; '.join(signals)}
-    elif buy_count == 1:
+    elif buy_count == 1 and sell_count == 0:
         return {'action': 'COMPRAR', 'cls': 'green', 'reason': '; '.join(signals)}
     else:
+        # Inclui o empate 1x1 (ex.: abaixo do preço justo, mas acima do teto
+        # Bazin): sinais contraditórios não devem resolver sempre para COMPRAR.
         return {'action': 'MANTER', 'cls': 'yellow', 'reason': '; '.join(signals) or 'preço neutro'}
 
 
 def clear_cache():
+    """Limpa o cache (mem + disco) de fundamentos/proventos. Antes existiam
+    três caches separados (um por tipo de requisição ao Status Invest); com
+    _fetch_raw unificado, um único cache cobre tudo."""
     global _mem_cache
     _mem_cache = {}
     try:
         if os.path.exists(_CACHE_FILE):
             os.remove(_CACHE_FILE)
-    except Exception:
-        pass
-
-
-_SI_DIVIDENDS_MONTHLY = (
-    'https://statusinvest.com.br/acao/companytickerprovents'
-    '?ticker={ticker}&chartProventsType=1'
-)
-
-_div_cache: dict = {}
-_DIV_CACHE_TTL = timedelta(hours=12)
+    except Exception as e:
+        logger.warning(f'Não foi possível remover cache em disco: {e}')
 
 
 def fetch_dividends_detail(ticker):
     """
-    Retorna dividendos mensais dos ultimos 12 meses e anual estimado.
+    Retorna dividendos mensais dos ultimos 12 meses e anual (trailing 12m).
     Separa FIIs (pagamento mensal garantido) de acoes (irregular).
     """
     ticker_base = ticker.replace('.SA', '')
-    is_fii = '11' in ticker_base
+    ticker_is_fii = is_fii(ticker_base)
 
-    entry = _div_cache.get(ticker_base)
-    if entry and datetime.fromisoformat(entry['ts']) + _DIV_CACHE_TTL > datetime.now():
-        return entry['data']
+    raw = _fetch_raw(ticker_base)
+    events = (raw or {}).get('dividend_events') or []
 
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        f_monthly = ex.submit(_get_json, _SI_DIVIDENDS_MONTHLY.format(ticker=ticker_base))
-        f_yearly  = ex.submit(_get_json, _SI_DIVIDENDS.format(ticker=ticker_base))
-        monthly_data = f_monthly.result()
-        yearly_data  = f_yearly.result()
-
-    now   = datetime.now()
-    today = now.date()
-
+    cutoff = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
     monthly_payments = {}
-    if monthly_data:
-        try:
-            for item in monthly_data.get('assetEarningsModels', []):
-                try:
-                    dt = datetime.strptime(item['pd'], '%d/%m/%Y')
-                    # Apenas pagamentos já realizados (não futuros) dentro dos últimos 365 dias
-                    if dt.date() <= today and (now - dt).days <= 365:
-                        key = dt.strftime('%Y-%m')
-                        monthly_payments[key] = monthly_payments.get(key, 0) + float(item['v'])
-                except Exception:
-                    continue
-        except Exception:
-            pass
+    for e in events:
+        if e['status'] == 'pago' and e.get('pay_date', '') >= cutoff:
+            key = e['pay_date'][:7]
+            monthly_payments[key] = monthly_payments.get(key, 0) + e['value']
 
-    annual_estimated = None
-    if yearly_data:
-        try:
-            pay_year = now.year + (1 if now.month >= 10 else 0)
-            yearly = {y['rank']: y['value']
-                      for y in yearly_data.get('assetEarningsYearlyModels', [])}
-            last_full    = yearly.get(pay_year - 1, 0)
-            curr_partial = yearly.get(pay_year, 0)
-            annualized   = (curr_partial / (now.month / 12)) if curr_partial > 0 else 0
-            raw = max(last_full, annualized)
-            annual_estimated = round(raw, 4) if raw > 0 else None
-        except Exception:
-            pass
-
-    months_paid  = len(monthly_payments)
-    total_paid   = sum(monthly_payments.values())
+    months_paid = len(monthly_payments)
+    total_paid  = sum(monthly_payments.values())
     # Média mensal = total dos últimos 12 meses / 12 (janela fixa, igual para FIIs e ações)
-    monthly_avg  = round(total_paid / 12, 4) if monthly_payments else None
-    # Anual estimado: usa histórico real se disponível, senão API externa
+    monthly_avg = round(total_paid / 12, 4) if monthly_payments else None
     annual_from_history = round(total_paid, 4) if monthly_payments else None
 
-    result = {
-        'is_fii':              is_fii,
-        'annual_estimated':    annual_estimated,
+    return {
+        'is_fii':              ticker_is_fii,
+        # Antes existiam duas métricas diferentes ("estimado" via API externa
+        # vs. "histórico" via soma real); agora ambas vêm da mesma fonte de
+        # eventos reais, então são idênticas — mantidas as duas chaves para
+        # não quebrar quem já consome este dict.
+        'annual_estimated':    annual_from_history,
         'annual_from_history': annual_from_history,
         'monthly_avg':         monthly_avg,
         'months_paid':         months_paid,
         'monthly_payments':    monthly_payments,
     }
-    _div_cache[ticker_base] = {'data': result, 'ts': datetime.now().isoformat()}
-    return result
 
 
 def portfolio_dividends(portfolio):
@@ -412,71 +495,14 @@ def portfolio_dividends(portfolio):
     }
 
 
-# ── URL para buscar todos os eventos de proventos (com datas) ─────────────
-_SI_PROVENTS = (
-    'https://statusinvest.com.br/acao/companytickerprovents'
-    '?ticker={ticker}&chartProventsType=2'
-)
-_SI_PROVENTS_TYPE1 = (
-    'https://statusinvest.com.br/acao/companytickerprovents'
-    '?ticker={ticker}&chartProventsType=1'
-)
-_SI_PROVENTS_TYPE2 = (
-    'https://statusinvest.com.br/acao/companytickerprovents'
-    '?ticker={ticker}&chartProventsType=2'
-)
-
-_full_div_cache: dict = {}
-_FULL_DIV_TTL = timedelta(hours=6)
-
-
 def _fetch_all_events(ticker_base):
-    """Busca todos os eventos de proventos com datas de pagamento e ex-dividendo.
-    Combina chartProventsType=1 (mensal/FII) e chartProventsType=2 (anual/acao)
-    para garantir que todos os pagamentos sejam capturados independente do ativo.
-    """
-    entry = _full_div_cache.get(ticker_base)
-    if entry and datetime.fromisoformat(entry['ts']) + _FULL_DIV_TTL > datetime.now():
-        return entry['data']
-
-    now = datetime.now()
-    seen_keys = set()  # evita duplicatas por (pay_date, value)
-    events = []
-
-    for url_tpl in (_SI_PROVENTS_TYPE1, _SI_PROVENTS_TYPE2):
-        try:
-            r = requests.get(url_tpl.format(ticker=ticker_base), headers=_HEADERS, timeout=12)
-            if r.status_code != 200:
-                continue
-            data = r.json()
-        except Exception:
-            continue
-
-        for item in data.get('assetEarningsModels', []):
-            try:
-                pay_date = datetime.strptime(item['pd'], '%d/%m/%Y') if item.get('pd') else None
-                ex_date  = datetime.strptime(item['ed'], '%d/%m/%Y') if item.get('ed') else None
-                value    = float(item.get('v', 0))
-                if value <= 0:
-                    continue
-                # chave de deduplicacao: mesma data de pagamento + mesmo valor
-                key = (pay_date.strftime('%Y-%m-%d') if pay_date else None, round(value, 6))
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                status = 'futuro' if (pay_date and pay_date > now) else 'pago'
-                events.append({
-                    'pay_date': pay_date.strftime('%Y-%m-%d') if pay_date else None,
-                    'ex_date':  ex_date.strftime('%Y-%m-%d')  if ex_date  else None,
-                    'value':    round(value, 6),
-                    'type':     item.get('etd', 'Dividendo'),
-                    'status':   status,
-                })
-            except Exception:
-                continue
-
+    """Retorna todos os eventos de proventos (pagos e futuros) do ticker, mais
+    recentes primeiro. Usa o mesmo cache/fonte de _fetch_raw (brapi.dev para
+    ações, investidor10.com.br para FIIs) — antes fazia duas requisições
+    próprias ao Status Invest; agora reaproveita o que já foi buscado."""
+    raw = _fetch_raw(ticker_base)
+    events = list((raw or {}).get('dividend_events') or [])
     events.sort(key=lambda x: x['pay_date'] or '', reverse=True)
-    _full_div_cache[ticker_base] = {'data': events, 'ts': datetime.now().isoformat()}
     return events
 
 
@@ -534,7 +560,7 @@ def _ref_date_for_event(ev):
     return pd
 
 
-def fetch_dividends_full(portfolio):
+def fetch_dividends_full(portfolio, user_id):
     """
     Retorna visao completa de dividendos da carteira.
     - Usa historico de transacoes para calcular quantidade correta em cada pagamento
@@ -545,13 +571,12 @@ def fetch_dividends_full(portfolio):
     if not portfolio:
         return None
 
-    import sqlite3
-    conn = sqlite3.connect('data/regulador.db')
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute('SELECT ticker, type, quantity, date FROM transactions WHERE user_id=1 ORDER BY date')
-    all_transactions = [dict(r) for r in cur.fetchall()]
-    conn.close()
+    from database import get_transactions
+    # Antes usava sempre user_id=1 direto no SQL, ignorando o usuário informado
+    # pelo chamador — quebrava a reconstrução de quantidade para qualquer outro
+    # usuário. Reaproveita a camada de acesso segura em vez de abrir uma conexão
+    # sqlite própria com um caminho relativo hardcoded.
+    all_transactions = get_transactions(user_id)
 
     now        = datetime.now()
     today      = now.strftime('%Y-%m-%d')
@@ -565,7 +590,11 @@ def fetch_dividends_full(portfolio):
     def _process(ticker_base):
         pos         = port_map[ticker_base]
         current_qty = pos['quantity']
-        is_fii      = '11' in ticker_base
+        # Nome diferente de `is_fii` (a função importada de market_data):
+        # atribuir a um nome igual ao de uma função importada faria o Python
+        # tratá-lo como variável local em toda a função, quebrando a própria
+        # chamada do lado direito com UnboundLocalError.
+        tb_is_fii   = is_fii(ticker_base)
         qty_history = _build_qty_history(all_transactions, ticker_base)
         events      = _fetch_all_events(ticker_base)
         result      = []
@@ -578,7 +607,7 @@ def fetch_dividends_full(portfolio):
                 if qty <= 0:
                     continue
                 total = round(ev['value'] * qty, 2)
-                result.append({**ev, 'ticker': ticker_base, 'is_fii': is_fii,
+                result.append({**ev, 'ticker': ticker_base, 'is_fii': tb_is_fii,
                                'quantity': qty, 'value_per_share': ev['value'], 'total': total})
             else:
                 # Futuro: pay_date ainda nao chegou
@@ -592,7 +621,7 @@ def fetch_dividends_full(portfolio):
                     except Exception:
                         pass
                 total = round(ev['value'] * current_qty, 2)
-                result.append({**ev, 'ticker': ticker_base, 'is_fii': is_fii,
+                result.append({**ev, 'ticker': ticker_base, 'is_fii': tb_is_fii,
                                'quantity': current_qty, 'value_per_share': ev['value'], 'total': total})
         return ticker_base, result
 
@@ -672,7 +701,7 @@ def fetch_dividends_full(portfolio):
         paid_months = sorted({e['pay_date'][:7] for e in paid_asset})
         summary.append({
             'ticker':         tb,
-            'is_fii':         '11' in tb,
+            'is_fii':         is_fii(tb),
             'quantity':       port_map[tb]['quantity'],
             'total_12m':      total_paid_12m,
             'events_12m':     len(paid_asset),
@@ -691,7 +720,7 @@ def fetch_dividends_full(portfolio):
     stock_proj_monthly = 0.0
 
     for tb, evs in by_ticker.items():
-        is_fii  = '11' in tb
+        tb_is_fii = is_fii(tb)
         cqty    = port_map[tb]['quantity']
         paid_tb = sorted(
             [e for e in evs if e['status'] == 'pago' and e.get('pay_date', '') >= cutoff_12m],
@@ -700,7 +729,7 @@ def fetch_dividends_full(portfolio):
         if not paid_tb:
             continue
 
-        if is_fii:
+        if tb_is_fii:
             # Media dos ultimos 3 pagamentos por cota * qty atual
             recent       = paid_tb[:3]
             avg_per_unit = sum(e['value_per_share'] for e in recent) / len(recent)
